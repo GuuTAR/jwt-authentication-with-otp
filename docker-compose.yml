@@ -1,0 +1,62 @@
+name: jwt-authentication-with-otp
+
+services:
+  mongo:
+    image: mongo:9.0
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test:
+        ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - path: ./backend/.env
+        required: true
+    # Overrides backend/.env so the API reaches Mongo over the compose network.
+    environment:
+      PORT: 8000
+      MONGODB_URI: mongodb://mongo:27017
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  web:
+    build:
+      context: ./web
+      # Vite bakes these into the bundle at build time. Values come from the
+      # root .env (see .env.template). The browser calls the API directly, so
+      # VITE_API_BASE_URL must be reachable from the host, not the compose network.
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_PRIMEUI_LICENSE: ${VITE_PRIMEUI_LICENSE:-}
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5173}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
