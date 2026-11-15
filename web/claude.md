@@ -9,7 +9,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - pinia
 - primevue
 - primeicons
-- firebase
 - dayjs
 - axios
 

@@ -1,22 +1,17 @@
 <script setup lang="ts">
-import Button from 'primevue/button'
-import Divider from 'primevue/divider'
-
-import googleIcon from '@/assets/google.svg'
-
 import { DEFAULT_LANGUAGE } from '@/data/user'
 
-import { useAuth } from '@/composables/useAuth'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 
 import AppName from '@/components/core/AppName/AppName.vue'
 import FlexStack from '@/components/core/FlexStack/FlexStack.vue'
 import TextVariant from '@/components/core/TextVariant/TextVariant.vue'
 
+import LoginFormSection from '@/views/Login/section/LoginForm/LoginFormSection.vue'
+
 import * as Languages from './lang'
 
 const { isDesktop } = useBreakpoint()
-const { isLoading, loginGoogle, loginDemo } = useAuth()
 </script>
 
 <template>
@@ -40,30 +35,12 @@ const { isLoading, loginGoogle, loginDemo } = useAuth()
           <TextVariant variant="h4" :bold="true" class="login-page__sign-in">
             {{ Languages.SIGN_IN[DEFAULT_LANGUAGE] }}
           </TextVariant>
+          <TextVariant variant="body2" class="login-page__sign-in-hint">
+            {{ Languages.SIGN_IN_HINT[DEFAULT_LANGUAGE] }}
+          </TextVariant>
         </FlexStack>
 
-        <Button
-          :disabled="isLoading"
-          variant="outlined"
-          fluid
-          @click="loginGoogle"
-          class="login-page__google"
-        >
-          <img :src="googleIcon" width="24" height="24" alt="" />
-          <span>{{ Languages.CONTINUE_WITH_GOOGLE[DEFAULT_LANGUAGE] }}</span>
-        </Button>
-
-        <Divider align="center" class="login-page__divider">{{
-          Languages.OR[DEFAULT_LANGUAGE]
-        }}</Divider>
-
-        <Button
-          :label="Languages.PLAY_AS_DEMO_USER[DEFAULT_LANGUAGE]"
-          :disabled="isLoading"
-          icon="pi pi-play"
-          fluid
-          @click="loginDemo"
-        />
+        <LoginFormSection />
       </FlexStack>
     </FlexStack>
   </main>
@@ -113,21 +90,7 @@ const { isLoading, loginGoogle, loginDemo } = useAuth()
   gap: var(--app-spacing-4);
 }
 
-.login-page__brand {
-  align-items: center;
-  gap: var(--app-spacing-2);
-}
-
-.login-page__google {
-  gap: var(--app-spacing-2);
-}
-
-.login-page__divider {
-  margin: 0;
-  font-size: 14px;
-}
-
-.login-page__divider :deep(.p-divider-content) {
-  background: var(--p-primary-0);
+.login-page__sign-in-hint {
+  color: var(--p-primary-900);
 }
 </style>

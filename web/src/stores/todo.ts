@@ -18,7 +18,7 @@ import {
 
 import { useAppDataStore } from '@/stores/appData'
 
-import { TodoAPI } from '@/api/authApi'
+import { TodoAPI } from '@/api/todoApi'
 import { apiService } from '@/services/apiService'
 
 const todoApi = new TodoAPI(apiService)
