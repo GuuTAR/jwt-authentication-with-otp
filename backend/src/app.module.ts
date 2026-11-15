@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common'
 import { MongooseModule } from '@nestjs/mongoose'
 import { createObserveModule } from '@nestjs/observe'
 
-import { FirebaseModule } from './firebase/firebase.module.js'
-
 import { AuthModule } from './auth/auth.module.js'
 
 import { TodosModule } from './todos/todos.module.js'
@@ -27,7 +25,6 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule()
       process.env.MONGODB_URI ?? 'mongodb://localhost:27017',
       { dbName: process.env.MONGODB_DB_NAME ?? 'testdb' },
     ),
-    FirebaseModule,
     AuthModule,
     TodosModule,
   ],

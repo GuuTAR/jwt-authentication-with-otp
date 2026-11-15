@@ -5,8 +5,11 @@ import { HydratedDocument } from 'mongoose'
 /** E.164 format, e.g. +66812345678. */
 export const PHONE_NUMBER_PATTERN = /^\+[1-9]\d{7,14}$/
 
+/** 3–32 characters: lowercase letters, digits, dot, underscore. */
+export const USERNAME_PATTERN = /^[a-z0-9._]{3,32}$/
+
 export enum UserStatus {
-  /** Created on first OTP request, phone number not verified yet. */
+  /** Phone number not verified yet. */
   PENDING = 'pending',
   ACTIVE = 'active',
   SUSPENDED = 'suspended',
@@ -21,9 +24,18 @@ export class UserEntity {
     required: true,
     unique: true,
     trim: true,
-    match: PHONE_NUMBER_PATTERN,
+    lowercase: true,
+    match: USERNAME_PATTERN,
   })
-  phone_number: string
+  username: string
+
+  /** scrypt hash, see `PasswordService`. Excluded from queries unless selected. */
+  @Prop({ required: true, select: false })
+  password_hash: string
+
+  /** Optional until OTP verification is added. Unique when set. */
+  @Prop({ trim: true, match: PHONE_NUMBER_PATTERN })
+  phone_number?: string
 
   @Prop({
     type: String,
@@ -39,3 +51,11 @@ export class UserEntity {
 
 export type UserDocument = HydratedDocument<UserEntity>
 export const UserSchema = SchemaFactory.createForClass(UserEntity)
+
+UserSchema.index(
+  { phone_number: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { phone_number: { $type: 'string' } },
+  },
+)

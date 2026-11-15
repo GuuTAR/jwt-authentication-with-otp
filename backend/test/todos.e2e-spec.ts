@@ -5,18 +5,30 @@ import type { Connection } from 'mongoose'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { AppModule } from '../src/app.module.js'
-import { FIREBASE_AUTH } from '../src/firebase/firebase.module.js'
 
 describe('TodosController (e2e)', () => {
   let app: INestApplication<App>
-  // The bearer token is used as the UID, e.g. "Bearer user-1" -> uid "user-1".
-  const verifyIdToken = vi.fn(async (token: string) => ({ uid: token }))
-  const asUser = (uid: string) => ({ Authorization: `Bearer ${uid}` })
+  let tokens: Record<string, string>
+  const asUser = (name: string) => ({ Authorization: `Bearer ${tokens[name]}` })
 
-  const createTodo = async (title: string, uid = 'user-1') => {
+  /** Registers and logs in a user, returning its access token. */
+  const signUp = async (username: string) => {
+    const credentials = { username, password: 'correct-horse' }
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send(credentials)
+      .expect(201)
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send(credentials)
+      .expect(200)
+    return res.body.body.access_token as string
+  }
+
+  const createTodo = async (title: string, user = 'user-1') => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/todos')
-      .set(asUser(uid))
+      .set(asUser(user))
       .send({ title })
       .expect(201)
     return res.body.body
@@ -25,17 +37,20 @@ describe('TodosController (e2e)', () => {
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    })
-      .overrideProvider(FIREBASE_AUTH)
-      .useValue({ verifyIdToken })
-      .compile()
+    }).compile()
 
     app = moduleFixture.createNestApplication()
     await app.init()
-    await app
-      .get<Connection>(getConnectionToken())
-      .collection('todos')
-      .deleteMany({})
+    const conn = app.get<Connection>(getConnectionToken())
+    await Promise.all(
+      ['todos', 'users', 'auth_sessions'].map((name) =>
+        conn.collection(name).deleteMany({}),
+      ),
+    )
+    tokens = {
+      'user-1': await signUp('user_1'),
+      'user-2': await signUp('user_2'),
+    }
   })
 
   afterEach(async () => {
