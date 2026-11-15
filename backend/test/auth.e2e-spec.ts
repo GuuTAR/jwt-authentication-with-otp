@@ -9,6 +9,8 @@ import {
   type TestContext,
 } from './helpers.js'
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 /** 4 characters, without the ambiguous 0, O, 1, I and L. */
 const REF_PATTERN = /^[A-HJKMNP-Z2-9]{4}$/
 
@@ -109,7 +111,7 @@ describe('Auth 2FA flow (e2e)', () => {
         message: 'OTP sent',
         body: {
           auth_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
-          challenge_id: expect.stringMatching(/^[0-9a-f]{24}$/),
+          challenge_id: expect.stringMatching(UUID_PATTERN),
           ref: expect.stringMatching(REF_PATTERN),
           expires_in: 300,
           resend_after: 60,
@@ -145,6 +147,33 @@ describe('Auth 2FA flow (e2e)', () => {
       expect((await ctx.redis.keys('otp:cooldown:*'))[0]).not.toContain(
         phoneNumber,
       )
+    })
+
+    it('keeps only the OTP HMAC in Redis and the metadata in MongoDB', async () => {
+      const { challenge_id, ref } = (await login().expect(200)).body.body
+
+      // The value is a bare HMAC-SHA256 hex digest: no code, user or purpose.
+      expect(await ctx.redis.get(`otp:${challenge_id}`)).toMatch(
+        /^[0-9a-f]{64}$/,
+      )
+
+      const user = await ctx.conn.collection('users').findOne({ username })
+      const challenge = await ctx.conn
+        .collection<{ _id: string; expires_at: Date }>('otp_challenges')
+        .findOne({ _id: challenge_id })
+      expect(challenge).toMatchObject({
+        user_id: user?._id,
+        phone_number: phoneNumber,
+        purpose: 'sign_in',
+        status: 'pending',
+        ref,
+        failed_attempts: 0,
+        expires_at: expect.any(Date),
+      })
+      const ttlMs = challenge!.expires_at.getTime() - Date.now()
+      expect(ttlMs).toBeGreaterThan(295_000)
+      expect(ttlMs).toBeLessThanOrEqual(300_000)
+      expect(JSON.stringify(challenge)).not.toContain(ctx.otp.last.code)
     })
 
     it('never sends an OTP for a wrong password, and uses one generic error', async () => {
@@ -305,6 +334,59 @@ describe('Auth 2FA flow (e2e)', () => {
       expect(
         await ctx.conn.collection('otp_challenges').findOne({}),
       ).toMatchObject({ status: 'locked' })
+    })
+  })
+
+  describe('OTP send rate limits', () => {
+    const tooMany = {
+      code: 429,
+      message: 'Too many OTP requests. Try again later.',
+    }
+
+    beforeEach(async () => {
+      await register().expect(201)
+    })
+
+    it('allows 5 codes per phone number per hour, counting resends', async () => {
+      const { challenge_id } = (await login().expect(200)).body.body
+      for (let i = 0; i < 2; i++) {
+        await clearCooldowns()
+        await resend(challenge_id).expect(200)
+      }
+      for (let i = 0; i < 2; i++) {
+        await clearCooldowns()
+        await login().expect(200)
+      }
+      expect(ctx.otp.sent).toHaveLength(5)
+
+      await clearCooldowns()
+      await login().expect(429).expect(tooMany)
+      await resend(challenge_id).expect(429).expect(tooMany)
+      expect(ctx.otp.sent).toHaveLength(5)
+
+      const [key] = await ctx.redis.keys('rate:otp:phone:*')
+      expect(key).not.toContain(phoneNumber)
+      expect(await ctx.redis.get(key)).toBe('5')
+      expect(await ctx.redis.ttl(key)).toBeGreaterThan(3595)
+    })
+
+    it('allows 20 codes per IP per hour', async () => {
+      await login().expect(200)
+      const [key] = await ctx.redis.keys('rate:otp:ip:*')
+      expect(await ctx.redis.ttl(key)).toBeGreaterThan(3595)
+
+      // Simulate 19 more sends from this IP to other numbers.
+      await ctx.redis.incrby(key, 19)
+      await clearCooldowns()
+      await login().expect(429).expect(tooMany)
+      expect(ctx.otp.sent).toHaveLength(1)
+    })
+
+    it('does not count requests blocked by the cooldown', async () => {
+      await login().expect(200)
+      await login().expect(429)
+      const [key] = await ctx.redis.keys('rate:otp:phone:*')
+      expect(await ctx.redis.get(key)).toBe('1')
     })
   })
 

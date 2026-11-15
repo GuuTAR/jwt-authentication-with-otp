@@ -11,13 +11,20 @@ export const OTP_TTL_SECONDS = 5 * 60
 export const OTP_MAX_ATTEMPTS = 5
 /** Minimum gap between codes sent to one phone number. */
 export const OTP_RESEND_COOLDOWN_SECONDS = 60
+/** Codes sent (new and resent) allowed per phone number and per IP per window. */
+export const OTP_RATE_WINDOW_SECONDS = 60 * 60
+export const OTP_MAX_SENDS_PER_PHONE = 5
+export const OTP_MAX_SENDS_PER_IP = 20
 
 /** Redis keys. Identifiers that could be personal data are hashed. */
 export const otpKeys = {
   challenge: (challengeId: string) => `otp:${challengeId}`,
   attempts: (challengeId: string) => `otp:attempt:${challengeId}`,
   cooldown: (phoneHash: string) => `otp:cooldown:${phoneHash}`,
+  rateByPhone: (phoneHash: string) => `rate:otp:phone:${phoneHash}`,
+  rateByIp: (ipHash: string) => `rate:otp:ip:${ipHash}`,
 }
 
 export const INVALID_CODE = 'Invalid or expired code'
 export const RESEND_TOO_SOON = 'Please wait before requesting another code'
+export const TOO_MANY_OTP_REQUESTS = 'Too many OTP requests. Try again later.'

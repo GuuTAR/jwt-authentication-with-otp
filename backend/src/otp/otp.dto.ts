@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger'
 
-import { IsMongoId, IsString, Matches } from 'class-validator'
+import { IsString, IsUUID, Matches } from 'class-validator'
 
 import { OTP_LENGTH } from './otp.constants.js'
 import type { IssuedChallenge } from './otp.service.js'
@@ -9,8 +9,8 @@ import { maskPhoneNumber } from './otp-sender.js'
 export const CODE_PATTERN = new RegExp(`^\\d{${OTP_LENGTH}}$`)
 
 export class OtpVerifyRequest {
-  @ApiProperty({ example: '665f1c2e8b3e4a0012345678' })
-  @IsMongoId()
+  @ApiProperty({ example: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d' })
+  @IsUUID(4)
   challenge_id: string
 
   @ApiProperty({ example: '123456' })
@@ -20,13 +20,13 @@ export class OtpVerifyRequest {
 }
 
 export class OtpResendRequest {
-  @ApiProperty({ example: '665f1c2e8b3e4a0012345678' })
-  @IsMongoId()
+  @ApiProperty({ example: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d' })
+  @IsUUID(4)
   challenge_id: string
 }
 
 export class OtpChallengeResponse {
-  @ApiProperty({ example: '665f1c2e8b3e4a0012345678' })
+  @ApiProperty({ example: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d' })
   challenge_id: string
 
   @ApiProperty({ description: 'Seconds until the code expires', example: 300 })

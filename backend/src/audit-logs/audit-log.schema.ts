@@ -31,12 +31,9 @@ export class AuditLogEntity {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: UserEntity.name })
   user_id?: Types.ObjectId
 
-  @Prop({
-    type: MongooseSchema.Types.ObjectId,
-    ref: OtpChallengeEntity.name,
-    index: true,
-  })
-  challenge_id?: Types.ObjectId
+  /** `otp_challenges._id` (UUID). */
+  @Prop({ type: String, ref: OtpChallengeEntity.name, index: true })
+  challenge_id?: string
 
   @Prop({ type: String, enum: AuditEventType, required: true })
   event_type: AuditEventType

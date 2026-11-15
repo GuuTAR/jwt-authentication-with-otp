@@ -8,8 +8,9 @@ import {
 } from '@nestjs/common'
 import { InjectModel } from '@nestjs/mongoose'
 
+import { isUUID } from 'class-validator'
 import type { Redis } from 'ioredis'
-import { isValidObjectId, Model } from 'mongoose'
+import { Model } from 'mongoose'
 import { randomInt } from 'node:crypto'
 
 import type { ClientInfo } from '../common/client-info.decorator.js'
@@ -33,23 +34,21 @@ import {
 import {
   INVALID_CODE,
   OTP_LENGTH,
+  OTP_MAX_ATTEMPTS,
+  OTP_MAX_SENDS_PER_IP,
+  OTP_MAX_SENDS_PER_PHONE,
+  OTP_RATE_WINDOW_SECONDS,
   OTP_REF_ALPHABET,
   OTP_REF_LENGTH,
-  OTP_MAX_ATTEMPTS,
   OTP_RESEND_COOLDOWN_SECONDS,
   OTP_TTL_SECONDS,
   otpKeys,
   RESEND_TOO_SOON,
+  TOO_MANY_OTP_REQUESTS,
 } from './otp.constants.js'
 import { OTP_SENDER, type OtpSender } from './otp-sender.js'
 
-/** What Redis holds for a live challenge. The code itself is never stored. */
-interface StoredChallenge {
-  hmac: string
-  ref: string
-  user_id: string
-  purpose: OtpPurpose
-}
+type ChallengeRecord = OtpChallengeEntity & { _id: string }
 
 export interface IssuedChallenge {
   challengeId: string
@@ -80,9 +79,12 @@ export interface VerifyChallengeInput {
 /**
  * One-time passwords bound to a user and purpose.
  *
- * - Codes are random, stored only as HMAC(challengeId:code), and expire.
+ * - Codes come from a CSPRNG. Redis holds only HMAC-SHA256(challengeId:code)
+ *   under `otp:{challengeId}` with a 300s TTL; the code itself is never stored.
+ * - Challenge metadata (user, purpose, status, ref, expiry) lives in MongoDB.
  * - A challenge allows `OTP_MAX_ATTEMPTS` wrong codes, then it is locked.
  * - Resending sends a new code but keeps the expiry and attempt counter.
+ * - Sends are limited per phone number (cooldown and hourly) and per IP.
  * - A correct code consumes the challenge, so it works only once.
  */
 @Injectable()
@@ -102,7 +104,7 @@ export class OtpService {
     purpose,
     client,
   }: IssueChallengeInput): Promise<IssuedChallenge> {
-    await this.startCooldown(phoneNumber, { userId, client, purpose })
+    await this.limitSends(phoneNumber, { userId, client, purpose })
 
     const code = generateCode()
     const ref = generateRef()
@@ -113,19 +115,13 @@ export class OtpService {
       ref,
       expires_at: new Date(Date.now() + OTP_TTL_SECONDS * 1000),
     })
-    const challengeId = String(challenge._id)
+    const challengeId = challenge._id
 
-    const stored: StoredChallenge = {
-      hmac: this.codeHmac(challengeId, code),
-      ref,
-      user_id: userId,
-      purpose,
-    }
     await this.redis
       .multi()
       .set(
         otpKeys.challenge(challengeId),
-        JSON.stringify(stored),
+        this.codeHmac(challengeId, code),
         'EX',
         OTP_TTL_SECONDS,
       )
@@ -158,23 +154,30 @@ export class OtpService {
     purpose,
     client,
   }: VerifyChallengeInput): Promise<void> {
+    const challenge = await this.findLive(challengeId)
     const fail = async (reason: string, attempt?: number) => {
       await this.auditLogs.record({
         event: AuditEventType.OTP_VERIFY,
         result: AuditResult.FAILURE,
         userId,
-        challengeId: isValidObjectId(challengeId) ? challengeId : undefined,
+        challengeId: challenge?._id,
         client,
-        metadata: { purpose, reason, ...(attempt && { attempt }) },
+        metadata: {
+          purpose,
+          reason,
+          ...(challenge && { ref: challenge.ref }),
+          ...(attempt && { attempt }),
+        },
       })
       return new UnauthorizedException(INVALID_CODE)
     }
 
-    const stored = await this.load(challengeId)
-    if (!stored) throw await fail('expired_or_unknown')
-    if (stored.user_id !== userId || stored.purpose !== purpose) {
+    if (!challenge) throw await fail('expired_or_unknown')
+    if (String(challenge.user_id) !== userId || challenge.purpose !== purpose) {
       throw await fail('challenge_mismatch')
     }
+    const hmac = await this.redis.get(otpKeys.challenge(challengeId))
+    if (!hmac) throw await fail('expired_or_unknown')
 
     // Count the attempt before comparing, so parallel guesses cannot all slip
     // under the limit.
@@ -184,7 +187,7 @@ export class OtpService {
       throw await fail('locked', attempt)
     }
 
-    if (!safeEqualHex(this.codeHmac(challengeId, code), stored.hmac)) {
+    if (!safeEqualHex(this.codeHmac(challengeId, code), hmac)) {
       if (attempt >= OTP_MAX_ATTEMPTS) {
         await this.lock(challengeId, attempt)
       } else {
@@ -203,7 +206,7 @@ export class OtpService {
 
     const now = new Date()
     await this.challengeModel.updateOne(
-      { _id: challengeId },
+      { _id: challengeId, status: OtpStatus.PENDING },
       {
         status: OtpStatus.CONSUMED,
         failed_attempts: attempt - 1,
@@ -217,7 +220,7 @@ export class OtpService {
       userId,
       challengeId,
       client,
-      metadata: { purpose, ref: stored.ref, attempt },
+      metadata: { purpose, ref: challenge.ref, attempt },
     })
   }
 
@@ -228,23 +231,17 @@ export class OtpService {
   ): Promise<{ issued: IssuedChallenge; phoneNumber: string }> {
     const invalid = new BadRequestException('Invalid or expired challenge')
 
-    const stored = await this.load(challengeId)
-    if (!stored) throw invalid
-    const [ttlMs, attempts, challenge] = await Promise.all([
+    const challenge = await this.findLive(challengeId)
+    if (!challenge) throw invalid
+    const [ttlMs, attempts] = await Promise.all([
       this.redis.pttl(otpKeys.challenge(challengeId)),
       this.redis.get(otpKeys.attempts(challengeId)),
-      this.challengeModel.findById(challengeId).lean(),
     ])
-    if (ttlMs <= 0 || !challenge || Number(attempts) >= OTP_MAX_ATTEMPTS) {
-      throw invalid
-    }
+    if (ttlMs <= 0 || Number(attempts) >= OTP_MAX_ATTEMPTS) throw invalid
 
-    const { user_id: userId, purpose } = stored
-    await this.startCooldown(challenge.phone_number, {
-      userId,
-      client,
-      purpose,
-    })
+    const userId = String(challenge.user_id)
+    const { phone_number: phoneNumber, purpose } = challenge
+    await this.limitSends(phoneNumber, { userId, client, purpose })
 
     const code = generateCode()
     // A new code gets a new ref, so the user can tell which SMS is current.
@@ -252,11 +249,7 @@ export class OtpService {
     // XX: never resurrect a challenge that was consumed or locked meanwhile.
     const updated = await this.redis.set(
       otpKeys.challenge(challengeId),
-      JSON.stringify({
-        ...stored,
-        hmac: this.codeHmac(challengeId, code),
-        ref,
-      } satisfies StoredChallenge),
+      this.codeHmac(challengeId, code),
       'PX',
       ttlMs,
       'XX',
@@ -264,12 +257,7 @@ export class OtpService {
     if (updated !== 'OK') throw invalid
 
     await this.challengeModel.updateOne({ _id: challengeId }, { ref })
-    await this.sender.send({
-      phoneNumber: challenge.phone_number,
-      code,
-      ref,
-      purpose,
-    })
+    await this.sender.send({ phoneNumber, code, ref, purpose })
     await this.auditLogs.record({
       event: AuditEventType.OTP_RESEND,
       result: AuditResult.SUCCESS,
@@ -286,15 +274,42 @@ export class OtpService {
         expiresIn: Math.ceil(ttlMs / 1000),
         resendAfter: OTP_RESEND_COOLDOWN_SECONDS,
       },
-      phoneNumber: challenge.phone_number,
+      phoneNumber,
     }
   }
 
-  private async startCooldown(
+  /**
+   * Allows a send only when the phone number and IP are under their hourly
+   * limits and the phone number's 60s cooldown has passed. Every allowed send
+   * counts toward both limits.
+   */
+  private async limitSends(
     phoneNumber: string,
     audit: { userId: string; client: ClientInfo; purpose: OtpPurpose },
   ) {
-    const phoneHash = hmacSha256(this.config.otpSecret, `phone:${phoneNumber}`)
+    const phoneHash = this.hash(`phone:${phoneNumber}`)
+    const phoneKey = otpKeys.rateByPhone(phoneHash)
+    const ipKey = otpKeys.rateByIp(this.hash(`ip:${audit.client.ip}`))
+
+    const reject = async (reason: string, message: string) => {
+      await this.auditLogs.record({
+        event: AuditEventType.OTP_REQUEST,
+        result: AuditResult.FAILURE,
+        userId: audit.userId,
+        client: audit.client,
+        metadata: { purpose: audit.purpose, reason },
+      })
+      return new HttpException(message, HttpStatus.TOO_MANY_REQUESTS)
+    }
+
+    const [byPhone, byIp] = await this.redis.mget(phoneKey, ipKey)
+    if (
+      Number(byPhone) >= OTP_MAX_SENDS_PER_PHONE ||
+      Number(byIp) >= OTP_MAX_SENDS_PER_IP
+    ) {
+      throw await reject('rate_limited', TOO_MANY_OTP_REQUESTS)
+    }
+
     const started = await this.redis.set(
       otpKeys.cooldown(phoneHash),
       1,
@@ -302,16 +317,27 @@ export class OtpService {
       OTP_RESEND_COOLDOWN_SECONDS,
       'NX',
     )
-    if (started === 'OK') return
+    if (started !== 'OK') throw await reject('cooldown', RESEND_TOO_SOON)
 
-    await this.auditLogs.record({
-      event: AuditEventType.OTP_REQUEST,
-      result: AuditResult.FAILURE,
-      userId: audit.userId,
-      client: audit.client,
-      metadata: { purpose: audit.purpose, reason: 'cooldown' },
-    })
-    throw new HttpException(RESEND_TOO_SOON, HttpStatus.TOO_MANY_REQUESTS)
+    await this.redis
+      .multi()
+      .incr(phoneKey)
+      .expire(phoneKey, OTP_RATE_WINDOW_SECONDS, 'NX')
+      .incr(ipKey)
+      .expire(ipKey, OTP_RATE_WINDOW_SECONDS, 'NX')
+      .exec()
+  }
+
+  /** A pending, unexpired challenge, or null. */
+  private async findLive(challengeId: string): Promise<ChallengeRecord | null> {
+    if (!isUUID(challengeId, 4)) return null
+    return this.challengeModel
+      .findOne({
+        _id: challengeId,
+        status: OtpStatus.PENDING,
+        expires_at: { $gt: new Date() },
+      })
+      .lean<ChallengeRecord>()
   }
 
   private async lock(challengeId: string, failedAttempts: number) {
@@ -322,22 +348,21 @@ export class OtpService {
     )
   }
 
-  private async load(challengeId: string): Promise<StoredChallenge | null> {
-    if (!isValidObjectId(challengeId)) return null
-    const raw = await this.redis.get(otpKeys.challenge(challengeId))
-    return raw ? (JSON.parse(raw) as StoredChallenge) : null
+  private codeHmac(challengeId: string, code: string): string {
+    return this.hash(`${challengeId}:${code}`)
   }
 
-  private codeHmac(challengeId: string, code: string): string {
-    return hmacSha256(this.config.otpSecret, `${challengeId}:${code}`)
+  private hash(value: string): string {
+    return hmacSha256(this.config.otpSecret, value)
   }
 }
 
+/** Uniform CSPRNG code, zero-padded, e.g. 042917. */
 function generateCode(): string {
   return String(randomInt(0, 10 ** OTP_LENGTH)).padStart(OTP_LENGTH, '0')
 }
 
-/** Unbiased pick from `OTP_REF_ALPHABET`, e.g. K7QP. */
+/** Uniform pick from `OTP_REF_ALPHABET`, e.g. K7QP. */
 function generateRef(): string {
   return Array.from(
     { length: OTP_REF_LENGTH },
