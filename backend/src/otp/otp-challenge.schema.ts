@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 
-import { HydratedDocument, Types } from 'mongoose'
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose'
 
 import { PHONE_NUMBER_PATTERN, UserEntity } from '../users/user.schema.js'
 
@@ -30,7 +30,11 @@ export enum OtpStatus {
 })
 export class OtpChallengeEntity {
   /** Unset when the phone number has no user yet (sign-up). */
-  @Prop({ type: Types.ObjectId, ref: UserEntity.name, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: UserEntity.name,
+    index: true,
+  })
   user_id?: Types.ObjectId
 
   /** Copied from the request so challenges work before a user exists. */

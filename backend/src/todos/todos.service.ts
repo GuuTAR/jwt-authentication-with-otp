@@ -12,7 +12,7 @@ import { TodoEntity } from './todo.schema.js'
 
 type TodoRecord = TodoEntity & { _id: unknown }
 
-/** All operations are scoped to the caller's Firebase UID. */
+/** All operations are scoped to the caller's user ID. */
 @Injectable()
 export class TodosService {
   constructor(

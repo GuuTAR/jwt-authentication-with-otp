@@ -25,10 +25,14 @@ export enum AuditResult {
 })
 export class AuditLogEntity {
   /** Unset when the actor is unknown, e.g. an OTP request for a new number. */
-  @Prop({ type: Types.ObjectId, ref: UserEntity.name })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: UserEntity.name })
   user_id?: Types.ObjectId
 
-  @Prop({ type: Types.ObjectId, ref: OtpChallengeEntity.name, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: OtpChallengeEntity.name,
+    index: true,
+  })
   challenge_id?: Types.ObjectId
 
   @Prop({ type: String, enum: AuditEventType, required: true })
