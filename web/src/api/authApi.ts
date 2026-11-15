@@ -1,88 +1,45 @@
 import type { AxiosResponse } from 'axios'
 
-import { STATUS_CODE } from '@/enum/global'
+import type { AuthTokens, AuthUser, LoginInput, PendingLogin } from '@/types/Auth'
 import type { ResponseData } from '@/types/ResponseData'
-import type { InsertTodoInput, TodoRecord } from '@/types/Todo'
 
 import type { ApiService } from '@/services/apiService'
 
-export class TodoAPI {
+/**
+ * Auth endpoints. Errors are thrown as AxiosError so callers can react to the
+ * status code (401 wrong credentials, 429 rate limited, 503 SMS unavailable, ...).
+ */
+export class AuthAPI {
   private api: ApiService
 
   constructor(apiService: ApiService) {
     this.api = apiService
   }
 
-  public getTodos = async (): Promise<TodoRecord[]> => {
-    try {
-      const result: AxiosResponse<ResponseData<TodoRecord[]>> =
-        await this.api.get<ResponseData<TodoRecord[]>>('/api/v1/todos')
-      if (result.status === STATUS_CODE.OK) {
-        return result.data.body ?? []
-      }
-      throw new Error(`Unexpected status code: ${result.status}`)
-    } catch (error) {
-      console.error('Error in GET /api/v1/todos:', (error as Error).message)
-      return []
-    }
+  /** Step 1 of 2FA: checks the password and sends an OTP. Never returns a token. */
+  public login = async (input: LoginInput): Promise<PendingLogin> => {
+    const result: AxiosResponse<ResponseData<PendingLogin>> = await this.api.post<
+      ResponseData<PendingLogin>,
+      LoginInput
+    >('/api/v1/auth/login', input)
+    return result.data.body
   }
 
-  public createTodo = async (todoInput: InsertTodoInput): Promise<boolean> => {
-    try {
-      const result: AxiosResponse = await this.api.post<undefined, InsertTodoInput>(
-        '/api/v1/todos',
-        todoInput,
-      )
-      if (result.status === STATUS_CODE.CREATED) {
-        return true
-      }
-      throw new Error(`Unexpected status code: ${result.status}`)
-    } catch (error) {
-      console.error('Error in POST /api/v1/todos:', (error as Error).message)
-      return false
-    }
+  public refresh = async (refreshToken: string): Promise<AuthTokens> => {
+    const result: AxiosResponse<ResponseData<AuthTokens>> = await this.api.post<
+      ResponseData<AuthTokens>,
+      { refresh_token: string }
+    >('/api/v1/auth/refresh', { refresh_token: refreshToken }, { skipAuthRefresh: true })
+    return result.data.body
   }
 
-  public resetTodos = async (): Promise<boolean> => {
-    try {
-      const result: AxiosResponse = await this.api.patch<undefined, undefined>(
-        `/api/v1/todos-reset`,
-      )
-      if (result.status === STATUS_CODE.OK) {
-        return true
-      }
-      throw new Error(`Unexpected status code: ${result.status}`)
-    } catch (error) {
-      console.error(`Error in PATCH /api/v1/todos-reset:`, (error as Error).message)
-      return false
-    }
+  public logout = async (): Promise<void> => {
+    await this.api.post<undefined>('/api/v1/auth/logout', undefined, { skipAuthRefresh: true })
   }
 
-  public toggleTodoStatus = async (id: string): Promise<boolean> => {
-    try {
-      const result: AxiosResponse = await this.api.patch<undefined, undefined>(
-        `/api/v1/todos-toggle/${id}`,
-      )
-      if (result.status === STATUS_CODE.OK) {
-        return true
-      }
-      throw new Error(`Unexpected status code: ${result.status}`)
-    } catch (error) {
-      console.error(`Error in PATCH /api/v1/todos-toggle/${id}`, (error as Error).message)
-      return false
-    }
-  }
-
-  public deleteTodo = async (id: string): Promise<boolean> => {
-    try {
-      const result: AxiosResponse = await this.api.delete<undefined>(`/api/v1/todos/${id}`)
-      if (result.status === STATUS_CODE.OK) {
-        return true
-      }
-      throw new Error(`Unexpected status code: ${result.status}`)
-    } catch (error) {
-      console.error(`Error in DELETE /api/v1/todos/${id}:`, (error as Error).message)
-      return false
-    }
+  public me = async (): Promise<AuthUser> => {
+    const result: AxiosResponse<ResponseData<AuthUser>> =
+      await this.api.get<ResponseData<AuthUser>>('/api/v1/auth/me')
+    return result.data.body
   }
 }

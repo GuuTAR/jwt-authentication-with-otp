@@ -12,7 +12,6 @@ Project for simulating an authentication workflow with OTP. A Vue + PrimeVue web
 - Node.js 22.18+ or 24.12+
 - Yarn 1.22 (Classic)
 - Docker with Compose v2.24+ (to run the full stack)
-- A Firebase project with Authentication enabled (web only)
 
 ## Project setup
 
@@ -48,13 +47,7 @@ Vite inlines `VITE_*` variables into the public JS bundle, so never put secrets 
 | Variable | Description |
 | --- | --- |
 | `VITE_API_BASE_URL` | Base URL of the backend API, as reached from the browser, e.g. `http://localhost:8000` |
-| `VITE_FIREBASE_API_KEY` | Web API key |
-| `VITE_FIREBASE_AUTH_DOMAIN` | Auth domain, e.g. `<project-id>.firebaseapp.com` |
-| `VITE_FIREBASE_PROJECT_ID` | Firebase project ID |
-| `VITE_FIREBASE_APP_ID` | Web app ID |
 | `VITE_PRIMEUI_LICENSE` | PrimeUI license key |
-
-Find the Firebase values in the Firebase console under **Project settings → General → Your apps → SDK setup and configuration**.
 
 ### Backend (`backend/.env`)
 

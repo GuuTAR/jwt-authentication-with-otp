@@ -10,10 +10,6 @@ COPY . .
 # Vite inlines VITE_* variables into the bundle at build time, so they must be
 # passed as build args. They end up in public JS, so never pass real secrets.
 ARG VITE_PRIMEUI_LICENSE
-ARG VITE_FIREBASE_API_KEY
-ARG VITE_FIREBASE_AUTH_DOMAIN
-ARG VITE_FIREBASE_PROJECT_ID
-ARG VITE_FIREBASE_APP_ID
 ARG VITE_API_BASE_URL
 RUN yarn build-only
 
