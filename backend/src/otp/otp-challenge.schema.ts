@@ -67,6 +67,10 @@ export class OtpChallengeEntity {
   @Prop()
   consumed_at?: Date
 
+  /** Reference of the latest code sent, e.g. K7QP. Changes on resend. */
+  @Prop({ required: true })
+  ref: string
+
   created_at: Date
 }
 

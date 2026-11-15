@@ -33,6 +33,8 @@ import {
 import {
   INVALID_CODE,
   OTP_LENGTH,
+  OTP_REF_ALPHABET,
+  OTP_REF_LENGTH,
   OTP_MAX_ATTEMPTS,
   OTP_RESEND_COOLDOWN_SECONDS,
   OTP_TTL_SECONDS,
@@ -44,12 +46,15 @@ import { OTP_SENDER, type OtpSender } from './otp-sender.js'
 /** What Redis holds for a live challenge. The code itself is never stored. */
 interface StoredChallenge {
   hmac: string
+  ref: string
   user_id: string
   purpose: OtpPurpose
 }
 
 export interface IssuedChallenge {
   challengeId: string
+  /** Reference of the code that was just sent. */
+  ref: string
   /** Seconds until the challenge expires. */
   expiresIn: number
   /** Seconds until another code can be sent. */
@@ -99,17 +104,20 @@ export class OtpService {
   }: IssueChallengeInput): Promise<IssuedChallenge> {
     await this.startCooldown(phoneNumber, { userId, client, purpose })
 
+    const code = generateCode()
+    const ref = generateRef()
     const challenge = await this.challengeModel.create({
       user_id: userId,
       phone_number: phoneNumber,
       purpose,
+      ref,
       expires_at: new Date(Date.now() + OTP_TTL_SECONDS * 1000),
     })
     const challengeId = String(challenge._id)
-    const code = generateCode()
 
     const stored: StoredChallenge = {
       hmac: this.codeHmac(challengeId, code),
+      ref,
       user_id: userId,
       purpose,
     }
@@ -124,18 +132,19 @@ export class OtpService {
       .set(otpKeys.attempts(challengeId), 0, 'EX', OTP_TTL_SECONDS)
       .exec()
 
-    await this.sender.send(phoneNumber, code, purpose)
+    await this.sender.send({ phoneNumber, code, ref, purpose })
     await this.auditLogs.record({
       event: AuditEventType.OTP_REQUEST,
       result: AuditResult.SUCCESS,
       userId,
       challengeId,
       client,
-      metadata: { purpose },
+      metadata: { purpose, ref },
     })
 
     return {
       challengeId,
+      ref,
       expiresIn: OTP_TTL_SECONDS,
       resendAfter: OTP_RESEND_COOLDOWN_SECONDS,
     }
@@ -208,7 +217,7 @@ export class OtpService {
       userId,
       challengeId,
       client,
-      metadata: { purpose, attempt },
+      metadata: { purpose, ref: stored.ref, attempt },
     })
   }
 
@@ -238,29 +247,42 @@ export class OtpService {
     })
 
     const code = generateCode()
+    // A new code gets a new ref, so the user can tell which SMS is current.
+    const ref = generateRef()
     // XX: never resurrect a challenge that was consumed or locked meanwhile.
     const updated = await this.redis.set(
       otpKeys.challenge(challengeId),
-      JSON.stringify({ ...stored, hmac: this.codeHmac(challengeId, code) }),
+      JSON.stringify({
+        ...stored,
+        hmac: this.codeHmac(challengeId, code),
+        ref,
+      } satisfies StoredChallenge),
       'PX',
       ttlMs,
       'XX',
     )
     if (updated !== 'OK') throw invalid
 
-    await this.sender.send(challenge.phone_number, code, purpose)
+    await this.challengeModel.updateOne({ _id: challengeId }, { ref })
+    await this.sender.send({
+      phoneNumber: challenge.phone_number,
+      code,
+      ref,
+      purpose,
+    })
     await this.auditLogs.record({
       event: AuditEventType.OTP_RESEND,
       result: AuditResult.SUCCESS,
       userId,
       challengeId,
       client,
-      metadata: { purpose },
+      metadata: { purpose, ref },
     })
 
     return {
       issued: {
         challengeId,
+        ref,
         expiresIn: Math.ceil(ttlMs / 1000),
         resendAfter: OTP_RESEND_COOLDOWN_SECONDS,
       },
@@ -313,4 +335,12 @@ export class OtpService {
 
 function generateCode(): string {
   return String(randomInt(0, 10 ** OTP_LENGTH)).padStart(OTP_LENGTH, '0')
+}
+
+/** Unbiased pick from `OTP_REF_ALPHABET`, e.g. K7QP. */
+function generateRef(): string {
+  return Array.from(
+    { length: OTP_REF_LENGTH },
+    () => OTP_REF_ALPHABET[randomInt(OTP_REF_ALPHABET.length)],
+  ).join('')
 }
