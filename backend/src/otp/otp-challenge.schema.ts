@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose'
 
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose'
+import { randomUUID } from 'node:crypto'
 
 import { PHONE_NUMBER_PATTERN, UserEntity } from '../users/user.schema.js'
 
@@ -32,6 +33,13 @@ export enum OtpStatus {
   timestamps: { createdAt: 'created_at', updatedAt: false },
 })
 export class OtpChallengeEntity {
+  /**
+   * Challenge ID (UUID v4). Random rather than an ObjectId, which is partly
+   * predictable, because `POST /otp/resend` accepts it without a login.
+   */
+  @Prop({ type: String, default: () => randomUUID() })
+  _id: string
+
   /** Unset when the phone number has no user yet (sign-up). */
   @Prop({
     type: MongooseSchema.Types.ObjectId,

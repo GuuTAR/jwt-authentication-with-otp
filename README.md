@@ -88,7 +88,7 @@ $ docker compose logs -f backend
 $ docker compose down        # add -v to also delete the MongoDB volume
 ```
 
-Compose overrides `MONGODB_URI` and `REDIS_URL` so the API reaches the `mongo` and `redis` services. In development, OTP codes are printed in `docker compose logs backend`. MongoDB is pinned to `mongo:9.0` because current `mongo:8` images refuse to start on Linux kernel 6.19 and newer.
+Compose overrides `MONGODB_URI` and `REDIS_URL` so the API reaches the `mongo` and `redis` services. In development, the mock SMS provider prints OTP messages in `docker compose logs backend`. MongoDB is pinned to `mongo:9.0` because current `mongo:8` images refuse to start on Linux kernel 6.19 and newer.
 
 ### Local development
 

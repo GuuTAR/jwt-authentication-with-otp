@@ -13,7 +13,7 @@ import {
 } from './otp-challenge.schema.js'
 import { OtpController } from './otp.controller.js'
 import { OtpService } from './otp.service.js'
-import { LogOtpSender, OTP_SENDER } from './otp-sender.js'
+import { MockSmsProvider, OTP_SENDER } from './otp-sender.js'
 
 @Module({
   imports: [
@@ -25,7 +25,7 @@ import { LogOtpSender, OTP_SENDER } from './otp-sender.js'
     ]),
   ],
   controllers: [OtpController],
-  providers: [OtpService, { provide: OTP_SENDER, useClass: LogOtpSender }],
+  providers: [OtpService, { provide: OTP_SENDER, useClass: MockSmsProvider }],
   exports: [OtpService],
 })
 export class OtpModule {}
