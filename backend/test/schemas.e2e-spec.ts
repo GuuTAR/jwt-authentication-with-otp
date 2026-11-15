@@ -68,31 +68,59 @@ describe('Auth schemas (e2e)', () => {
     expect(AuthSession.collection.name).toBe('auth_sessions')
   })
 
+  it('stores references as ObjectId so string IDs are cast in queries', () => {
+    expect(OtpChallengeSchema.path('user_id').instance).toBe('ObjectId')
+    expect(AuditLogSchema.path('user_id').instance).toBe('ObjectId')
+    expect(AuditLogSchema.path('challenge_id').instance).toBe('ObjectId')
+    expect(AuthSessionSchema.path('user_id').instance).toBe('ObjectId')
+  })
+
   describe('users', () => {
-    it('defaults status to pending and sets timestamps', async () => {
-      const user = await User.create({ phone_number: '+66812345678' })
+    let n = 0
+    const newUser = (fields: object = {}) =>
+      User.create({ username: `user_${++n}`, password_hash: 'hash', ...fields })
+
+    it('defaults status to pending, lowercases the username and hides the hash', async () => {
+      const user = await newUser({ username: 'John.Doe' })
+      expect(user.username).toBe('john.doe')
       expect(user.status).toBe(UserStatus.PENDING)
       expect(user.created_at).toBeInstanceOf(Date)
       expect(user.updated_at).toBeInstanceOf(Date)
+
+      const found = await User.findById(user._id).lean()
+      expect(found).not.toHaveProperty('password_hash')
     })
 
-    it('rejects a non-E.164 phone number and unknown status', async () => {
-      await expect(User.create({ phone_number: '0812345678' })).rejects.toThrow(
+    it('requires a username and password hash', async () => {
+      await expect(User.create({})).rejects.toThrow(
+        /username.*password_hash|password_hash.*username/s,
+      )
+    })
+
+    it('rejects an invalid username, phone number or status', async () => {
+      await expect(newUser({ username: 'no spaces' })).rejects.toThrow(
+        /username/,
+      )
+      await expect(newUser({ phone_number: '0812345678' })).rejects.toThrow(
         /phone_number/,
       )
       await expect(
-        User.create({
-          phone_number: '+66899999999',
-          status: 'deleted' as UserStatus,
-        }),
+        newUser({ status: 'deleted' as UserStatus }),
       ).rejects.toThrow(/status/)
     })
 
-    it('enforces a unique phone number', async () => {
-      await User.create({ phone_number: '+66811111111' })
-      await expect(
-        User.create({ phone_number: '+66811111111' }),
-      ).rejects.toThrow(/E11000/)
+    it('enforces a unique username', async () => {
+      await newUser({ username: 'taken' })
+      await expect(newUser({ username: 'TAKEN' })).rejects.toThrow(/E11000/)
+    })
+
+    it('enforces a unique phone number only when one is set', async () => {
+      await newUser()
+      await newUser()
+      await newUser({ phone_number: '+66811111111' })
+      await expect(newUser({ phone_number: '+66811111111' })).rejects.toThrow(
+        /E11000/,
+      )
     })
   })
 
@@ -165,7 +193,7 @@ describe('Auth schemas (e2e)', () => {
   })
 
   describe('auth_sessions', () => {
-    it('requires a user and a unique refresh token hash', async () => {
+    it('requires a user and a unique refresh token hash when set', async () => {
       await expect(
         AuthSession.create({
           refresh_token_hash: 'h1',
@@ -180,6 +208,11 @@ describe('Auth schemas (e2e)', () => {
       }
       await AuthSession.create(session)
       await expect(AuthSession.create(session)).rejects.toThrow(/E11000/)
+
+      // Sessions without a refresh token do not collide.
+      const { user_id, expires_at } = session
+      await AuthSession.create({ user_id, expires_at })
+      await AuthSession.create({ user_id, expires_at })
     })
 
     it('expires sessions at expires_at', async () => {

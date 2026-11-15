@@ -1,18 +1,18 @@
 # jwt-authentication-with-otp
 
-Project for simulating an authentication workflow with OTP. A Vue + PrimeVue web client and a NestJS + MongoDB API, both using Firebase Authentication.
+Project for simulating an authentication workflow with OTP. A Vue + PrimeVue web client and a NestJS + MongoDB API with JWT authentication.
 
 | Folder | Stack | Details |
 | --- | --- | --- |
 | [`web/`](web) | Vue 3, Vite, PrimeVue, Pinia | [web/README.md](web/README.md) |
-| [`backend/`](backend) | NestJS, Mongoose, Firebase Admin | [backend/README.md](backend/README.md) |
+| [`backend/`](backend) | NestJS, Mongoose, JWT | [backend/README.md](backend/README.md) |
 
 ## Requirements
 
 - Node.js 22.18+ or 24.12+
 - Yarn 1.22 (Classic)
 - Docker with Compose v2.24+ (to run the full stack)
-- A Firebase project with Authentication enabled
+- A Firebase project with Authentication enabled (web only)
 
 ## Project setup
 
@@ -62,12 +62,10 @@ Find the Firebase values in the Firebase console under **Project settings → Ge
 | `PORT` | API port. Default: `8000` |
 | `MONGODB_URI` | MongoDB connection string. Default: `mongodb://localhost:27017` |
 | `MONGODB_DB_NAME` | Database name. Default: `testdb` |
-| `FIREBASE_PROJECT_ID` | Firebase project used to verify ID tokens (required) |
-| `FIREBASE_API_KEY` | Web API key, used by `POST /api/v1/auth/signin` (required) |
-| `FIREBASE_CLIENT_EMAIL` | Service account's client email. Falls back to Application Default Credentials |
-| `FIREBASE_PRIVATE_KEY` | Service account's private key. Wrap it in double quotes and keep the `\n` line breaks |
+| `JWT_SECRET` | Secret for signing access tokens, at least 32 characters (required). Generate one with `openssl rand -base64 48` |
+| `JWT_EXPIRES_IN` | Access token and session lifetime, in seconds. Default: `3600` |
 
-Generate a service account key in the Firebase console under **Project settings → Service accounts → Generate new private key**.
+See [backend/README.md](backend/README.md#authentication) for the auth endpoints.
 
 ## Compile and run the project
 

@@ -15,7 +15,7 @@ async function bootstrap() {
   app.enableCors({ origin: '*' })
 
   const config = new DocumentBuilder()
-    .setTitle('nestjs-firebase-auth-mongodb')
+    .setTitle('jwt-authentication-with-otp')
     .setVersion('1.0')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },

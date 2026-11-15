@@ -14,8 +14,6 @@ import {
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger'
 
-import type { DecodedIdToken } from 'firebase-admin/auth'
-
 import {
   ApiCreatedResponseOf,
   ApiErrorResponses,
@@ -27,7 +25,7 @@ import { ResponseMessage } from '../common/response-message.decorator.js'
 import { ResponseInterceptor } from '../common/response.interceptor.js'
 
 import { CurrentUser } from '../auth/current-user.decorator.js'
-import { FirebaseAuthGuard } from '../auth/firebase-auth.guard.js'
+import { type AuthPrincipal, JwtAuthGuard } from '../auth/jwt-auth.guard.js'
 
 import { TodoCreateRequest } from './dto/create-todo.dto.js'
 import { Todo } from './todo.model.js'
@@ -41,7 +39,7 @@ const SERVER_ERROR = { status: 500, description: 'Internal Server Error' }
 @ApiTags('todos')
 @ApiBearerAuth('BearerAuth')
 @Controller('api/v1')
-@UseGuards(FirebaseAuthGuard)
+@UseGuards(JwtAuthGuard)
 @UseFilters(HttpExceptionFilter)
 @UseInterceptors(ResponseInterceptor)
 export class TodosController {
@@ -52,8 +50,8 @@ export class TodosController {
   @ResponseMessage('Todos retrieved successfully')
   @ApiOkResponseOf([Todo])
   @ApiErrorResponses(UNAUTHORIZED, SERVER_ERROR)
-  findAll(@CurrentUser() user: DecodedIdToken): Promise<Todo[]> {
-    return this.todosService.findAll(user.uid)
+  findAll(@CurrentUser() user: AuthPrincipal): Promise<Todo[]> {
+    return this.todosService.findAll(user.userId)
   }
 
   @Post('todos')
@@ -63,10 +61,10 @@ export class TodosController {
   @ApiCreatedResponseOf(Todo)
   @ApiErrorResponses(BAD_REQUEST, UNAUTHORIZED, SERVER_ERROR)
   create(
-    @CurrentUser() user: DecodedIdToken,
+    @CurrentUser() user: AuthPrincipal,
     @Body() body: TodoCreateRequest,
   ): Promise<Todo> {
-    return this.todosService.create(user.uid, body.title)
+    return this.todosService.create(user.userId, body.title)
   }
 
   @Patch('todos-reset')
@@ -74,8 +72,8 @@ export class TodosController {
   @ResponseMessage('Todos reset successfully')
   @ApiOkResponseWithoutBody()
   @ApiErrorResponses(UNAUTHORIZED, SERVER_ERROR)
-  resetAll(@CurrentUser() user: DecodedIdToken): Promise<void> {
-    return this.todosService.resetAll(user.uid)
+  resetAll(@CurrentUser() user: AuthPrincipal): Promise<void> {
+    return this.todosService.resetAll(user.userId)
   }
 
   @Patch('todos-toggle/:id')
@@ -85,10 +83,10 @@ export class TodosController {
   @ApiOkResponseOf(Todo)
   @ApiErrorResponses(BAD_REQUEST, UNAUTHORIZED, NOT_FOUND)
   toggle(
-    @CurrentUser() user: DecodedIdToken,
+    @CurrentUser() user: AuthPrincipal,
     @Param('id') id: string,
   ): Promise<Todo> {
-    return this.todosService.toggle(user.uid, id)
+    return this.todosService.toggle(user.userId, id)
   }
 
   @Delete('todos/:id')
@@ -98,9 +96,9 @@ export class TodosController {
   @ApiOkResponseWithoutBody()
   @ApiErrorResponses(UNAUTHORIZED, NOT_FOUND)
   delete(
-    @CurrentUser() user: DecodedIdToken,
+    @CurrentUser() user: AuthPrincipal,
     @Param('id') id: string,
   ): Promise<void> {
-    return this.todosService.delete(user.uid, id)
+    return this.todosService.delete(user.userId, id)
   }
 }

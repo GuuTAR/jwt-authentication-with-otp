@@ -7,7 +7,7 @@ import { HydratedDocument } from 'mongoose'
   timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
 })
 export class TodoEntity {
-  /** Firebase UID of the owner. */
+  /** ID of the owning user. */
   @Prop({ required: true, index: true })
   user_id: string
 

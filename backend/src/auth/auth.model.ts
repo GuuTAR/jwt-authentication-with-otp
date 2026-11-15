@@ -1,29 +1,40 @@
-import { ApiProperty } from '@nestjs/swagger'
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 
-import type { DecodedIdToken } from 'firebase-admin/auth'
+import { UserStatus } from '../users/user.schema.js'
 
-export class AuthSignInResponse {
-  @ApiProperty({ description: 'Firebase ID token, use as Bearer token' })
-  token: string
+export class AuthUser {
+  @ApiProperty({ example: '665f1c2e8b3e4a0012345678' })
+  id: string
 
-  @ApiProperty({ description: 'Seconds until token expires', example: 3600 })
-  expires_in: number
+  @ApiProperty({ example: 'john.doe' })
+  username: string
 
-  @ApiProperty({ description: 'Firebase UID' })
-  uid: string
+  @ApiPropertyOptional({ example: '+66812345678' })
+  phone_number?: string
 
-  @ApiProperty({ example: 'user@example.com' })
-  email: string
+  @ApiProperty({ enum: UserStatus, example: UserStatus.ACTIVE })
+  status: UserStatus
+
+  @ApiProperty()
+  created_at: Date
+
+  @ApiProperty()
+  updated_at: Date
 }
 
-export class AuthMeResponse {
-  @ApiProperty({ description: 'Firebase UID' })
-  uid: string
+export class AuthLoginResponse {
+  @ApiProperty({ description: 'JWT, use as: Authorization: Bearer <token>' })
+  access_token: string
+
+  @ApiProperty({ example: 'Bearer' })
+  token_type: 'Bearer'
 
   @ApiProperty({
-    description: 'Decoded ID token claims, including custom claims',
-    type: 'object',
-    additionalProperties: true,
+    description: 'Seconds until the token expires',
+    example: 3600,
   })
-  claims: DecodedIdToken
+  expires_in: number
+
+  @ApiProperty({ type: AuthUser })
+  user: AuthUser
 }

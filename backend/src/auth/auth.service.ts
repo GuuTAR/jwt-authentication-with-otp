@@ -1,71 +1,133 @@
 import {
-  BadRequestException,
+  ConflictException,
+  Inject,
   Injectable,
-  InternalServerErrorException,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common'
+import { JwtService } from '@nestjs/jwt'
+import { InjectModel } from '@nestjs/mongoose'
 
-import { AuthSignInResponse } from './auth.model.js'
+import { Model, mongo, Types } from 'mongoose'
 
-const INVALID_CREDENTIALS = new Set([
-  'INVALID_LOGIN_CREDENTIALS',
-  'EMAIL_NOT_FOUND',
-  'INVALID_PASSWORD',
-  'USER_DISABLED',
-])
-const BAD_REQUEST = new Set(['INVALID_EMAIL', 'MISSING_PASSWORD'])
+import { UserEntity, UserStatus } from '../users/user.schema.js'
 
-interface SignInWithPasswordResult {
-  idToken: string
-  expiresIn: string
-  localId: string
-  email: string
-}
+import { AUTH_CONFIG } from './auth.constants.js'
+import type { AuthConfig } from './auth.config.js'
+import { AuthLoginResponse, AuthUser } from './auth.model.js'
+import { AuthSessionEntity } from './auth-session.schema.js'
+import { AuthRegisterRequest } from './dto/register.dto.js'
+import type { AccessTokenPayload, AuthPrincipal } from './jwt-auth.guard.js'
+import { PasswordService } from './password.service.js'
+
+type UserRecord = UserEntity & { _id: Types.ObjectId }
+
+const INVALID_CREDENTIALS = 'Invalid username or password'
 
 @Injectable()
 export class AuthService {
-  /** Exchanges email + password for an ID token via the Identity Toolkit REST API. */
-  async signIn(email: string, password: string): Promise<AuthSignInResponse> {
-    const apiKey = process.env.FIREBASE_API_KEY
-    if (!apiKey) {
-      throw new InternalServerErrorException('FIREBASE_API_KEY is not set')
+  constructor(
+    @InjectModel(UserEntity.name) private readonly userModel: Model<UserEntity>,
+    @InjectModel(AuthSessionEntity.name)
+    private readonly sessionModel: Model<AuthSessionEntity>,
+    private readonly jwtService: JwtService,
+    private readonly passwordService: PasswordService,
+    @Inject(AUTH_CONFIG) private readonly config: AuthConfig,
+  ) {}
+
+  async register({
+    username,
+    password,
+    phone_number,
+  }: AuthRegisterRequest): Promise<AuthUser> {
+    if (await this.userModel.exists({ username })) {
+      throw new ConflictException('Username is already taken')
     }
 
-    const res = await fetch(
-      `${this.identityToolkitUrl()}/accounts:signInWithPassword?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, returnSecureToken: true }),
-      },
-    )
-    const data = await res.json()
-
-    if (!res.ok) {
-      // Firebase error messages look like "CODE" or "CODE : details".
-      const code = String(data?.error?.message ?? '').split(' ')[0]
-      if (INVALID_CREDENTIALS.has(code)) {
-        throw new UnauthorizedException('Invalid email or password')
+    try {
+      const user = await this.userModel.create({
+        username,
+        password_hash: await this.passwordService.hash(password),
+        phone_number,
+        // No OTP step yet, so registered users can sign in right away.
+        status: UserStatus.ACTIVE,
+      })
+      return toAuthUser(user.toObject())
+    } catch (err) {
+      // Lost a race with a concurrent registration, or the phone is in use.
+      if (err instanceof mongo.MongoServerError && err.code === 11000) {
+        const field = Object.keys(err.keyPattern ?? {})[0]
+        throw new ConflictException(
+          field === 'phone_number'
+            ? 'Phone number is already registered'
+            : 'Username is already taken',
+        )
       }
-      if (BAD_REQUEST.has(code)) {
-        throw new BadRequestException(code)
-      }
-      throw new InternalServerErrorException(`Firebase sign-in failed: ${code}`)
-    }
-
-    const result = data as SignInWithPasswordResult
-    return {
-      token: result.idToken,
-      expires_in: Number(result.expiresIn),
-      uid: result.localId,
-      email: result.email,
+      throw err
     }
   }
 
-  private identityToolkitUrl(): string {
-    const emulator = process.env.FIREBASE_AUTH_EMULATOR_HOST
-    return emulator
-      ? `http://${emulator}/identitytoolkit.googleapis.com/v1`
-      : 'https://identitytoolkit.googleapis.com/v1'
+  async login(username: string, password: string): Promise<AuthLoginResponse> {
+    const user = await this.userModel
+      .findOne({ username })
+      .select('+password_hash')
+      .lean<UserRecord>()
+
+    const valid = user
+      ? await this.passwordService.verify(password, user.password_hash)
+      : await this.passwordService.verifyDummy(password)
+    if (!user || !valid) throw new UnauthorizedException(INVALID_CREDENTIALS)
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new UnauthorizedException('Account is suspended')
+    }
+
+    const expiresIn = this.config.jwtExpiresIn
+    const session = await this.sessionModel.create({
+      user_id: user._id,
+      expires_at: new Date(Date.now() + expiresIn * 1000),
+    })
+    const payload: AccessTokenPayload = {
+      sub: String(user._id),
+      sid: String(session._id),
+    }
+
+    return {
+      access_token: await this.jwtService.signAsync(payload, { expiresIn }),
+      token_type: 'Bearer',
+      expires_in: expiresIn,
+      user: toAuthUser(user),
+    }
+  }
+
+  /** Revokes the caller's session, so its access token stops working. */
+  async logout({ sessionId }: AuthPrincipal): Promise<void> {
+    await this.sessionModel.updateOne(
+      { _id: sessionId, revoked_at: { $exists: false } },
+      { revoked_at: new Date() },
+    )
+  }
+
+  async me({ userId }: AuthPrincipal): Promise<AuthUser> {
+    const user = await this.userModel.findById(userId).lean<UserRecord>()
+    if (!user) throw new NotFoundException('User not found')
+    return toAuthUser(user)
+  }
+}
+
+function toAuthUser({
+  _id,
+  username,
+  phone_number,
+  status,
+  created_at,
+  updated_at,
+}: UserRecord): AuthUser {
+  return {
+    id: String(_id),
+    username,
+    phone_number,
+    status,
+    created_at,
+    updated_at,
   }
 }
