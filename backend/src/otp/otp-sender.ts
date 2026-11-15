@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common'
 
-import type { OtpPurpose } from './otp-challenge.schema.js'
+import { OtpPurpose } from './otp-challenge.schema.js'
+import { OTP_TTL_SECONDS } from './otp.constants.js'
 
 /** Injection token for the `OtpSender` that delivers codes. */
 export const OTP_SENDER = Symbol('OTP_SENDER')
@@ -25,23 +26,36 @@ export function maskPhoneNumber(phoneNumber: string): string {
   return `${visibleStart}${'*'.repeat(hidden)}${visibleEnd}`
 }
 
+const SMS_TEMPLATES: Record<OtpPurpose, string> = {
+  [OtpPurpose.SIGN_IN]: 'Your login code is',
+  [OtpPurpose.SIGN_UP]: 'Your sign-up code is',
+  [OtpPurpose.VERIFY_PHONE]: 'Your phone verification code is',
+}
+
+/** The SMS text, e.g. "Your login code is 123456 (Ref: K7QP). Valid for 5 minutes." */
+export function formatOtpSms({ code, ref, purpose }: OtpMessage): string {
+  const minutes = Math.round(OTP_TTL_SECONDS / 60)
+  return `${SMS_TEMPLATES[purpose]} ${code} (Ref: ${ref}). Valid for ${minutes} minutes. Do not share this code.`
+}
+
 /**
- * Development sender: writes the code to the server log instead of sending an
- * SMS. Replace with a real provider (e.g. Twilio) before production use.
+ * Mock SMS provider: prints each SMS to the console instead of sending it.
+ * Replace with a real provider (e.g. Twilio) by binding another `OtpSender`
+ * to `OTP_SENDER` in `OtpModule`.
  */
 @Injectable()
-export class LogOtpSender implements OtpSender {
-  private readonly logger = new Logger('OtpSender')
+export class MockSmsProvider implements OtpSender {
+  private readonly logger = new Logger(MockSmsProvider.name)
 
   constructor() {
     this.logger.warn(
-      'OTP codes are written to the log. Configure an SMS provider for production.',
+      'Mock SMS provider: OTP messages are printed to the console, not sent.',
     )
   }
 
-  async send({ phoneNumber, code, ref, purpose }: OtpMessage) {
+  async send(message: OtpMessage) {
     this.logger.log(
-      `[${purpose}] OTP for ${maskPhoneNumber(phoneNumber)}: ${code} (Ref: ${ref})`,
+      `SMS to ${maskPhoneNumber(message.phoneNumber)}: ${formatOtpSms(message)}`,
     )
   }
 }

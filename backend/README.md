@@ -51,29 +51,55 @@ Send the access token as `Authorization: Bearer <access_token>`. Swagger UI is a
 - A wrong password never sends an OTP. Every password failure returns `Invalid username or password`, and every OTP failure returns `Invalid or expired code`.
 - The OTP is bound to the user, the purpose and the pending login. It expires after 5 minutes and works once.
 - 5 wrong codes lock the challenge. Resending sends a new code but keeps the expiry and the attempt count.
-- Codes can be sent to a phone number at most once every 60 seconds.
+- Codes can be sent to a phone number at most once every 60 seconds, and at most 5 times an hour. One IP can request at most 20 codes an hour. New codes and resends both count.
 - Each code comes with a 4-character reference (`ref`, e.g. `K7QP`) that appears in the SMS and in the API response, so the user can match them. A resend gets a new ref. The ref is not a secret and is not checked on verify.
 - 10 failed passwords from one IP block login from it for 15 minutes.
 - The pending login expires after 5 minutes and works once.
 - Codes are stored only as HMACs, refresh tokens only as SHA-256 hashes, and IPs and phone numbers in Redis keys only as HMACs.
 - Password and OTP outcomes, OTP sends and session changes are written to `audit_logs`.
 
-### Redis keys
-
-| Key | Purpose | TTL |
-| --- | --- | --- |
-| `auth:pending:{authId}` | Pending login between password and OTP | 300s |
-| `otp:{challengeId}` | OTP HMAC, ref, user and purpose | 300s |
-| `otp:attempt:{challengeId}` | Failed OTP attempts | 300s |
-| `otp:cooldown:{phoneHash}` | Resend cooldown | 60s |
-| `rate:login:ip:{ipHash}` | Failed password attempts per IP | 900s |
-
-### OTP delivery
-
-There is no SMS provider yet. `LogOtpSender` writes each code to the server log:
+### OTP storage
 
 ```text
-[OtpSender] [sign_in] OTP for +66*****5678: 123456 (Ref: K7QP)
+Auth Service → OTP Service
+                ├─ generate the code (CSPRNG, crypto.randomInt)
+                ├─ HMAC-SHA256(OTP_SECRET, challengeId:code)
+                ├─ Redis:   otp:{challengeId} = <hmac>        (TTL 300s)
+                ├─ MongoDB: otp_challenges metadata
+                └─ Mock SMS provider → console
+```
+
+Redis holds only the HMAC, so a Redis leak does not reveal any code. The metadata (`_id` UUID v4, `user_id`, `purpose`, `status`, `ref`, `failed_attempts`, `expires_at`) is in MongoDB:
+
+```json
+{
+  "_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "user_id": "665f1c2e8b3e4a0012345678",
+  "purpose": "sign_in",
+  "status": "pending",
+  "ref": "K7QP",
+  "expires_at": "2026-11-15T22:35:00Z"
+}
+```
+
+### Redis keys
+
+| Key | Value | TTL |
+| --- | --- | --- |
+| `auth:pending:{authId}` | Pending login between password and OTP | 300s |
+| `otp:{challengeId}` | OTP HMAC | 300s |
+| `otp:attempt:{challengeId}` | Failed OTP attempts | 300s |
+| `otp:cooldown:{phoneHash}` | Resend cooldown | 60s |
+| `rate:otp:phone:{phoneHash}` | Codes sent to this phone number (limit 5) | 3600s |
+| `rate:otp:ip:{ipHash}` | Codes requested from this IP (limit 20) | 3600s |
+| `rate:login:ip:{ipHash}` | Failed password attempts per IP (limit 10) | 900s |
+
+### Mock SMS provider
+
+There is no real SMS provider yet. `MockSmsProvider` prints each message to the console (`docker compose logs backend`):
+
+```text
+[MockSmsProvider] SMS to +66*****5678: Your login code is 123456 (Ref: K7QP). Valid for 5 minutes. Do not share this code.
 ```
 
 To send real SMS, implement `OtpSender` (`src/otp/otp-sender.ts`) and bind it to `OTP_SENDER` in `OtpModule`.

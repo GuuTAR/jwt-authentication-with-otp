@@ -71,7 +71,9 @@ describe('Auth schemas (e2e)', () => {
   it('stores references as ObjectId so string IDs are cast in queries', () => {
     expect(OtpChallengeSchema.path('user_id').instance).toBe('ObjectId')
     expect(AuditLogSchema.path('user_id').instance).toBe('ObjectId')
-    expect(AuditLogSchema.path('challenge_id').instance).toBe('ObjectId')
+    // Challenge IDs are UUID strings.
+    expect(AuditLogSchema.path('challenge_id').instance).toBe('String')
+    expect(OtpChallengeSchema.path('_id').instance).toBe('String')
     expect(AuthSessionSchema.path('user_id').instance).toBe('ObjectId')
   })
 
@@ -133,6 +135,9 @@ describe('Auth schemas (e2e)', () => {
         expires_at: new Date(Date.now() + 5 * 60_000),
       })
       expect(challenge.user_id).toBeUndefined()
+      expect(challenge._id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      )
       expect(challenge.status).toBe(OtpStatus.PENDING)
       expect(challenge.failed_attempts).toBe(0)
       expect(challenge.created_at).toBeInstanceOf(Date)
@@ -165,7 +170,7 @@ describe('Auth schemas (e2e)', () => {
     it('stores metadata and references', async () => {
       const log = await AuditLog.create({
         user_id: new Types.ObjectId(),
-        challenge_id: new Types.ObjectId(),
+        challenge_id: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d',
         event_type: AuditEventType.OTP_VERIFY,
         result: AuditResult.FAILURE,
         ip_address: '203.0.113.7',
@@ -175,6 +180,7 @@ describe('Auth schemas (e2e)', () => {
       const found = await AuditLog.findById(log._id).lean<any>()
       expect(found.metadata).toEqual({ reason: 'invalid_code', attempt: 2 })
       expect(found.user_id).toBeInstanceOf(Types.ObjectId)
+      expect(found.challenge_id).toBe('9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d')
     })
 
     it('rejects an unknown event type or result', async () => {
