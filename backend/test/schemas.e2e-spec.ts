@@ -171,7 +171,7 @@ describe('Auth schemas (e2e)', () => {
       const log = await AuditLog.create({
         user_id: new Types.ObjectId(),
         challenge_id: '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d',
-        event_type: AuditEventType.OTP_VERIFY,
+        event_type: AuditEventType.OTP_VERIFICATION_FAILED,
         result: AuditResult.FAILURE,
         ip_address: '203.0.113.7',
         user_agent: 'vitest',
@@ -192,7 +192,7 @@ describe('Auth schemas (e2e)', () => {
       ).rejects.toThrow(/event_type/)
       await expect(
         AuditLog.create({
-          event_type: AuditEventType.OTP_REQUEST,
+          event_type: AuditEventType.OTP_REQUESTED,
           result: 'maybe' as AuditResult,
         }),
       ).rejects.toThrow(/result/)

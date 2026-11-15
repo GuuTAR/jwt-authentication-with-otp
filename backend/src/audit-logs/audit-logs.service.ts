@@ -5,15 +5,10 @@ import { Model } from 'mongoose'
 
 import type { ClientInfo } from '../common/client-info.decorator.js'
 
-import {
-  AuditEventType,
-  AuditLogEntity,
-  AuditResult,
-} from './audit-log.schema.js'
+import { AuditEventType, AuditLogEntity, resultOf } from './audit-log.schema.js'
 
 export interface AuditEvent {
   event: AuditEventType
-  result: AuditResult
   userId?: string
   challengeId?: string
   client?: ClientInfo
@@ -33,7 +28,6 @@ export class AuditLogsService {
   /** Records an event. Failures are logged but never break the request. */
   async record({
     event,
-    result,
     userId,
     challengeId,
     client,
@@ -42,7 +36,7 @@ export class AuditLogsService {
     try {
       await this.auditLogModel.create({
         event_type: event,
-        result,
+        result: resultOf(event),
         user_id: userId,
         challenge_id: challengeId,
         ip_address: client?.ip,

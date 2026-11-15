@@ -8,12 +8,14 @@ export interface ClientInfo {
   userAgent?: string
 }
 
+export function clientInfoOf(req: Request): ClientInfo {
+  return {
+    ip: req.ip ?? req.socket.remoteAddress ?? 'unknown',
+    userAgent: req.headers['user-agent'],
+  }
+}
+
 export const Client = createParamDecorator(
-  (_data: unknown, ctx: ExecutionContext): ClientInfo => {
-    const req = ctx.switchToHttp().getRequest<Request>()
-    return {
-      ip: req.ip ?? req.socket.remoteAddress ?? 'unknown',
-      userAgent: req.headers['user-agent'],
-    }
-  },
+  (_data: unknown, ctx: ExecutionContext): ClientInfo =>
+    clientInfoOf(ctx.switchToHttp().getRequest<Request>()),
 )

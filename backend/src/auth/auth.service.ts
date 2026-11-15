@@ -23,7 +23,7 @@ import {
   type SecurityConfig,
 } from '../config/security.config.js'
 
-import { AuditEventType, AuditResult } from '../audit-logs/audit-log.schema.js'
+import { AuditEventType } from '../audit-logs/audit-log.schema.js'
 import { AuditLogsService } from '../audit-logs/audit-logs.service.js'
 
 import { OtpPurpose } from '../otp/otp-challenge.schema.js'
@@ -75,11 +75,10 @@ export class AuthService {
     private readonly auditLogs: AuditLogsService,
   ) {}
 
-  async register({
-    username,
-    password,
-    phone_number,
-  }: AuthRegisterRequest): Promise<AuthUser> {
+  async register(
+    { username, password, phone_number }: AuthRegisterRequest,
+    client: ClientInfo,
+  ): Promise<AuthUser> {
     if (await this.userModel.exists({ username })) {
       throw new ConflictException('Username is already taken')
     }
@@ -91,6 +90,11 @@ export class AuthService {
         phone_number,
         // Becomes active once an OTP to this phone number is verified.
         status: UserStatus.PENDING,
+      })
+      await this.auditLogs.record({
+        event: AuditEventType.USER_REGISTERED,
+        userId: String(user._id),
+        client,
       })
       return toAuthUser(user.toObject())
     } catch (err) {
@@ -121,10 +125,9 @@ export class AuthService {
     )
     if (Number(await this.redis.get(rateKey)) >= LOGIN_MAX_FAILURES_PER_IP) {
       await this.auditLogs.record({
-        event: AuditEventType.LOGIN_PASSWORD,
-        result: AuditResult.FAILURE,
+        event: AuditEventType.RATE_LIMIT_EXCEEDED,
         client,
-        metadata: { reason: 'rate_limited' },
+        metadata: { limit: 'login_per_ip' },
       })
       throw new HttpException(
         TOO_MANY_LOGIN_ATTEMPTS,
@@ -147,8 +150,7 @@ export class AuthService {
         .expire(rateKey, LOGIN_RATE_WINDOW_SECONDS, 'NX')
         .exec()
       await this.auditLogs.record({
-        event: AuditEventType.LOGIN_PASSWORD,
-        result: AuditResult.FAILURE,
+        event: AuditEventType.LOGIN_FAILED,
         userId: user ? String(user._id) : undefined,
         client,
         metadata: {
@@ -163,14 +165,15 @@ export class AuthService {
       throw new UnauthorizedException(INVALID_CREDENTIALS)
     }
 
+    // Password passed; the login succeeds only after the OTP (LOGIN_SUCCESS).
     const userId = String(user._id)
-    await this.auditLogs.record({
-      event: AuditEventType.LOGIN_PASSWORD,
-      result: AuditResult.SUCCESS,
-      userId,
-      client,
-    })
     if (!user.phone_number) {
+      await this.auditLogs.record({
+        event: AuditEventType.LOGIN_FAILED,
+        userId,
+        client,
+        metadata: { reason: 'two_factor_not_set_up' },
+      })
       throw new ForbiddenException(
         'Two-factor authentication is not set up for this account',
       )
@@ -209,10 +212,12 @@ export class AuthService {
     const raw = await this.redis.get(authKeys.pending(authId))
     if (!raw) {
       await this.auditLogs.record({
-        event: AuditEventType.OTP_VERIFY,
-        result: AuditResult.FAILURE,
+        event: AuditEventType.OTP_VERIFICATION_FAILED,
         client,
-        metadata: { purpose: OtpPurpose.SIGN_IN, reason: 'unknown_auth_id' },
+        metadata: {
+          purpose: OtpPurpose.SIGN_IN,
+          reason: 'unknown_or_expired_auth_id',
+        },
       })
       throw new UnauthorizedException(INVALID_CODE)
     }
@@ -229,6 +234,12 @@ export class AuthService {
 
     // The pending login works once, even if two requests race.
     if (!(await this.redis.getdel(authKeys.pending(authId)))) {
+      await this.auditLogs.record({
+        event: AuditEventType.LOGIN_FAILED,
+        userId: pending.user_id,
+        client,
+        metadata: { reason: 'pending_auth_already_used' },
+      })
       throw new UnauthorizedException(INVALID_CODE)
     }
 
@@ -252,7 +263,15 @@ export class AuthService {
         { returnDocument: 'after', updatePipeline: true },
       )
       .lean<UserRecord>()
-    if (!user) throw new UnauthorizedException(INVALID_CODE)
+    if (!user) {
+      await this.auditLogs.record({
+        event: AuditEventType.LOGIN_FAILED,
+        userId: pending.user_id,
+        client,
+        metadata: { reason: 'suspended' },
+      })
+      throw new UnauthorizedException(INVALID_CODE)
+    }
 
     const refreshToken = generateRefreshToken()
     const session = await this.sessionModel.create({
@@ -263,11 +282,11 @@ export class AuthService {
       ),
     })
     await this.auditLogs.record({
-      event: AuditEventType.SESSION_CREATE,
-      result: AuditResult.SUCCESS,
+      event: AuditEventType.LOGIN_SUCCESS,
       userId: String(user._id),
       challengeId: pending.challenge_id,
       client,
+      metadata: { session_id: String(session._id), method: 'password+otp' },
     })
 
     return this.tokens(user, String(session._id), refreshToken)
@@ -301,20 +320,22 @@ export class AuthService {
 
     if (!session || !user) {
       await this.auditLogs.record({
-        event: AuditEventType.SESSION_REFRESH,
-        result: AuditResult.FAILURE,
+        event: AuditEventType.INVALID_TOKEN,
         userId: session ? String(session.user_id) : undefined,
         client,
-        metadata: { reason: session ? 'user_unavailable' : 'invalid_token' },
+        metadata: {
+          token: 'refresh',
+          reason: session ? 'user_suspended' : 'unknown_revoked_or_expired',
+        },
       })
       throw new UnauthorizedException('Invalid or expired refresh token')
     }
 
     await this.auditLogs.record({
-      event: AuditEventType.SESSION_REFRESH,
-      result: AuditResult.SUCCESS,
+      event: AuditEventType.TOKEN_REFRESHED,
       userId: String(user._id),
       client,
+      metadata: { session_id: String(session._id) },
     })
     return this.tokens(user, String(session._id), next, session.expires_at)
   }
@@ -329,10 +350,10 @@ export class AuthService {
       { revoked_at: new Date() },
     )
     await this.auditLogs.record({
-      event: AuditEventType.SESSION_REVOKE,
-      result: AuditResult.SUCCESS,
+      event: AuditEventType.LOGOUT_SUCCESS,
       userId,
       client,
+      metadata: { session_id: sessionId },
     })
   }
 
