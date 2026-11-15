@@ -14,9 +14,8 @@ export type LoginInput = {
   password: string
 }
 
-/** Response of POST /api/v1/auth/login: the password passed and an OTP was sent. */
-export type PendingLogin = {
-  auth_id: string
+/** An OTP that was sent: returned by /auth/login, /otp/request and /otp/resend. */
+export type OtpChallenge = {
   challenge_id: string
   /** Reference printed next to the code in the SMS, e.g. K7QP. */
   ref: string
@@ -26,6 +25,24 @@ export type PendingLogin = {
   resend_after: number
   /** Masked phone number, e.g. +66*****5678. */
   phone_hint: string
+}
+
+/** Response of POST /api/v1/auth/login: the password passed and an OTP was sent. */
+export type PendingLogin = OtpChallenge & {
+  auth_id: string
+}
+
+/** A pending login with absolute deadlines, so countdowns survive re-renders. */
+export type PendingLoginState = PendingLogin & {
+  /** Epoch ms when the code (and the pending login) expires. */
+  expiresAt: number
+  /** Epoch ms when another code can be requested. */
+  resendAvailableAt: number
+}
+
+export type VerifyOtpInput = {
+  auth_id: string
+  code: string
 }
 
 /** Response of POST /api/v1/auth/verify-2fa and /refresh. */

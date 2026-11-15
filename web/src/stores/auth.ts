@@ -2,7 +2,13 @@ import { computed, ref, shallowRef } from 'vue'
 
 import { defineStore } from 'pinia'
 
-import type { AuthTokens, AuthUser, PendingLogin } from '@/types/Auth'
+import type {
+  AuthTokens,
+  AuthUser,
+  OtpChallenge,
+  PendingLogin,
+  PendingLoginState,
+} from '@/types/Auth'
 
 import { useAppDataStore } from '@/stores/appData'
 
@@ -23,7 +29,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = shallowRef<AuthUser | null>(null)
   const accessToken = ref<string | null>(null)
   /** Password passed and an OTP was sent; waiting for POST /auth/verify-2fa. */
-  const pendingLogin = shallowRef<PendingLogin | null>(null)
+  const pendingLogin = shallowRef<PendingLoginState | null>(null)
 
   const isAuthenticated = computed(() => accessToken.value !== null && user.value !== null)
 
@@ -33,7 +39,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const setPendingLogin = (login: PendingLogin | null) => {
-    pendingLogin.value = login
+    pendingLogin.value = login && withDeadlines(login)
+  }
+
+  /** Applies a resent code: new challenge details, same pending login. */
+  const updatePendingChallenge = (challenge: OtpChallenge) => {
+    if (!pendingLogin.value) return
+    pendingLogin.value = withDeadlines({ ...pendingLogin.value, ...challenge })
   }
 
   const setSession = (tokens: AuthTokens) => {
@@ -79,12 +91,22 @@ export const useAuthStore = defineStore('auth', () => {
     pendingLogin,
     isAuthenticated,
     setPendingLogin,
+    updatePendingChallenge,
     setSession,
     clearSession,
     refreshSession,
     waitForAuthReady,
   }
 })
+
+function withDeadlines(login: PendingLogin): PendingLoginState {
+  const now = Date.now()
+  return {
+    ...login,
+    expiresAt: now + login.expires_in * 1000,
+    resendAvailableAt: now + login.resend_after * 1000,
+  }
+}
 
 function readRefreshToken(): string | null {
   try {

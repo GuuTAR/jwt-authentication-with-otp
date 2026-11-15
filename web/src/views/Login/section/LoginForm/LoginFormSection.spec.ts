@@ -14,7 +14,8 @@ import { useAuthStore } from '@/stores/auth'
 
 import LoginFormSection from '@/views/Login/section/LoginForm/LoginFormSection.vue'
 
-const { loginMock, refreshMock, toastAdd } = vi.hoisted(() => ({
+const { loginMock, refreshMock, toastAdd, routerPush } = vi.hoisted(() => ({
+  routerPush: vi.fn<(to: unknown) => Promise<void>>(),
   loginMock: vi.fn<(input: LoginInput) => Promise<PendingLogin>>(),
   refreshMock: vi.fn<(refreshToken: string) => Promise<AuthTokens>>(),
   toastAdd: vi.fn<(message: object) => void>(),
@@ -31,9 +32,7 @@ vi.mock('@/api/authApi', () => ({
   }),
 }))
 vi.mock('primevue', () => ({ useToast: () => ({ add: toastAdd }) }))
-vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn<(to: unknown) => Promise<void>>() }),
-}))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: routerPush }) }))
 
 const PENDING: PendingLogin = {
   auth_id: '3f2b8c1e-7d4a-4f6b-9a2e-1c5d8e9f0a1b',
@@ -109,14 +108,15 @@ describe('LoginFormSection', () => {
     expect(wrapper.find('#login-password').attributes('autocomplete')).toBe('current-password')
   })
 
-  it('starts 2FA with the trimmed username, keeps the pending login and clears the password', async () => {
+  it('starts 2FA with the trimmed username, keeps the pending login and opens the OTP page', async () => {
     loginMock.mockResolvedValue(PENDING)
     const wrapper = mountForm()
 
     await fillAndSubmit(wrapper, '  John.Doe ', 'correct-horse')
 
     expect(loginMock).toHaveBeenCalledWith({ username: 'John.Doe', password: 'correct-horse' })
-    expect(useAuthStore().pendingLogin).toEqual(PENDING)
+    expect(useAuthStore().pendingLogin).toMatchObject(PENDING)
+    expect(routerPush).toHaveBeenCalledWith({ name: 'verify-otp' })
     expect(useAuthStore().isAuthenticated).toBe(false)
     expect(toastAdd).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -142,6 +142,7 @@ describe('LoginFormSection', () => {
 
     expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ severity: 'error', summary }))
     expect(useAuthStore().pendingLogin).toBeNull()
+    expect(routerPush).not.toHaveBeenCalled()
     expect((wrapper.find('#login-password').element as HTMLInputElement).value).toBe(
       'wrong-password',
     )

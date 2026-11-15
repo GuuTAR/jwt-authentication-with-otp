@@ -1,6 +1,6 @@
 import type { AxiosResponse } from 'axios'
 
-import type { AuthTokens, AuthUser, LoginInput, PendingLogin } from '@/types/Auth'
+import type { AuthTokens, AuthUser, LoginInput, PendingLogin, VerifyOtpInput } from '@/types/Auth'
 import type { ResponseData } from '@/types/ResponseData'
 
 import type { ApiService } from '@/services/apiService'
@@ -22,6 +22,15 @@ export class AuthAPI {
       ResponseData<PendingLogin>,
       LoginInput
     >('/api/v1/auth/login', input)
+    return result.data.body
+  }
+
+  /** Step 2 of 2FA: checks the OTP and issues the tokens. */
+  public verify2fa = async (input: VerifyOtpInput): Promise<AuthTokens> => {
+    const result: AxiosResponse<ResponseData<AuthTokens>> = await this.api.post<
+      ResponseData<AuthTokens>,
+      VerifyOtpInput
+    >('/api/v1/auth/verify-2fa', input, { skipAuthRefresh: true })
     return result.data.body
   }
 
