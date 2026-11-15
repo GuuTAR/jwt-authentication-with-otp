@@ -19,7 +19,14 @@ export type SentOtp = OtpMessage
 export class FakeOtpSender implements OtpSender {
   readonly sent: SentOtp[] = []
 
+  /** When set, the next send throws, like a provider outage. */
+  failNext = false
+
   async send(message: OtpMessage) {
+    if (this.failNext) {
+      this.failNext = false
+      throw new Error('SMS provider unavailable')
+    }
     this.sent.push(message)
   }
 

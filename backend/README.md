@@ -56,7 +56,7 @@ Send the access token as `Authorization: Bearer <access_token>`. Swagger UI is a
 - 10 failed passwords from one IP block login from it for 15 minutes.
 - The pending login expires after 5 minutes and works once.
 - Codes are stored only as HMACs, refresh tokens only as SHA-256 hashes, and IPs and phone numbers in Redis keys only as HMACs.
-- Password and OTP outcomes, OTP sends and session changes are written to `audit_logs`.
+- Security events are written to `audit_logs` (see [Audit log](#audit-log)).
 
 ### OTP storage
 
@@ -103,6 +103,32 @@ There is no real SMS provider yet. `MockSmsProvider` prints each message to the 
 ```
 
 To send real SMS, implement `OtpSender` (`src/otp/otp-sender.ts`) and bind it to `OTP_SENDER` in `OtpModule`.
+
+### Audit log
+
+Services call `AuditLogsService.record()` for every security event, and it is written to the `audit_logs` collection with the user, challenge, IP, user agent and metadata. `result` (`success` / `failure`) is derived from the event type. Passwords, OTP codes and tokens are never recorded. Writing an audit entry never fails the request.
+
+| Group | Event | Recorded when |
+| --- | --- | --- |
+| Authentication | `USER_REGISTERED` | Register succeeds |
+| | `LOGIN_SUCCESS` | Both factors pass and tokens are issued |
+| | `LOGIN_FAILED` | Unknown user, wrong password, suspended account, no 2FA phone number, or a pending login reused |
+| | `LOGOUT_SUCCESS` | Logout |
+| | `TOKEN_REFRESHED` | Refresh succeeds |
+| | `TOKEN_REVOKED` | *Reserved: no revoke feature other than logout yet* |
+| OTP | `OTP_REQUESTED` | A code is requested (login or `/otp/request`) |
+| | `OTP_SENT` | The SMS provider accepted the code |
+| | `OTP_SEND_FAILED` | The SMS provider failed (503; the challenge is dropped and the cooldown released) |
+| | `OTP_VERIFICATION_SUCCESS` | Correct code |
+| | `OTP_VERIFICATION_FAILED` | Wrong code, unknown challenge, wrong user or purpose, or a used/locked challenge |
+| | `OTP_EXPIRED` | A code is entered after the challenge expired |
+| | `OTP_RESENT` | Resend succeeds |
+| | `OTP_LOCKED` | The 5th wrong code locks the challenge |
+| Security | `RATE_LIMIT_EXCEEDED` | Login per IP, OTP per phone, OTP per IP, or OTP cooldown (`metadata.limit`) |
+| | `ACCOUNT_LOCKED` | *Reserved: no account lockout yet* |
+| | `INVALID_TOKEN` | Malformed, forged or expired access token; ended session; invalid refresh token |
+| | `UNAUTHORIZED_ACCESS` | A protected API is called without a bearer token |
+| User security | `PASSWORD_CHANGED`, `PASSWORD_RESET`, `TWO_FACTOR_ENABLED`, `TWO_FACTOR_DISABLED` | *Reserved: these features do not exist yet* |
 
 ## Compile and run the project
 

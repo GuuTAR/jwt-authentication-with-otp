@@ -4,6 +4,8 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common'
 import { InjectModel } from '@nestjs/mongoose'
@@ -21,7 +23,7 @@ import {
   type SecurityConfig,
 } from '../config/security.config.js'
 
-import { AuditEventType, AuditResult } from '../audit-logs/audit-log.schema.js'
+import { AuditEventType } from '../audit-logs/audit-log.schema.js'
 import { AuditLogsService } from '../audit-logs/audit-logs.service.js'
 
 import { REDIS } from '../redis/redis.module.js'
@@ -46,7 +48,7 @@ import {
   RESEND_TOO_SOON,
   TOO_MANY_OTP_REQUESTS,
 } from './otp.constants.js'
-import { OTP_SENDER, type OtpSender } from './otp-sender.js'
+import { OTP_SENDER, type OtpMessage, type OtpSender } from './otp-sender.js'
 
 type ChallengeRecord = OtpChallengeEntity & { _id: string }
 
@@ -89,6 +91,8 @@ export interface VerifyChallengeInput {
  */
 @Injectable()
 export class OtpService {
+  private readonly logger = new Logger(OtpService.name)
+
   constructor(
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(OTP_SENDER) private readonly sender: OtpSender,
@@ -104,6 +108,12 @@ export class OtpService {
     purpose,
     client,
   }: IssueChallengeInput): Promise<IssuedChallenge> {
+    await this.auditLogs.record({
+      event: AuditEventType.OTP_REQUESTED,
+      userId,
+      client,
+      metadata: { purpose },
+    })
     await this.limitSends(phoneNumber, { userId, client, purpose })
 
     const code = generateCode()
@@ -128,15 +138,21 @@ export class OtpService {
       .set(otpKeys.attempts(challengeId), 0, 'EX', OTP_TTL_SECONDS)
       .exec()
 
-    await this.sender.send({ phoneNumber, code, ref, purpose })
-    await this.auditLogs.record({
-      event: AuditEventType.OTP_REQUEST,
-      result: AuditResult.SUCCESS,
-      userId,
-      challengeId,
-      client,
-      metadata: { purpose, ref },
-    })
+    await this.deliver(
+      { phoneNumber, code, ref, purpose },
+      { userId, challengeId, client, event: AuditEventType.OTP_SENT },
+      // Nothing was delivered, so drop the challenge and let the user retry.
+      async () => {
+        await this.redis.del(
+          otpKeys.challenge(challengeId),
+          otpKeys.attempts(challengeId),
+        )
+        await this.challengeModel.updateOne(
+          { _id: challengeId },
+          { status: OtpStatus.FAILED },
+        )
+      },
+    )
 
     return {
       challengeId,
@@ -154,49 +170,69 @@ export class OtpService {
     purpose,
     client,
   }: VerifyChallengeInput): Promise<void> {
-    const challenge = await this.findLive(challengeId)
-    const fail = async (reason: string, attempt?: number) => {
-      await this.auditLogs.record({
-        event: AuditEventType.OTP_VERIFY,
-        result: AuditResult.FAILURE,
+    const challenge = isUUID(challengeId, 4)
+      ? await this.challengeModel.findById(challengeId).lean<ChallengeRecord>()
+      : null
+    const audit = (
+      event: AuditEventType,
+      metadata: Record<string, unknown> = {},
+    ) =>
+      this.auditLogs.record({
+        event,
         userId,
         challengeId: challenge?._id,
         client,
         metadata: {
           purpose,
-          reason,
           ...(challenge && { ref: challenge.ref }),
-          ...(attempt && { attempt }),
+          ...metadata,
         },
+      })
+    const fail = async (reason: string, attempt?: number) => {
+      await audit(AuditEventType.OTP_VERIFICATION_FAILED, {
+        reason,
+        ...(attempt && { attempt }),
       })
       return new UnauthorizedException(INVALID_CODE)
     }
 
-    if (!challenge) throw await fail('expired_or_unknown')
+    if (!challenge) throw await fail('unknown_challenge')
     if (String(challenge.user_id) !== userId || challenge.purpose !== purpose) {
       throw await fail('challenge_mismatch')
     }
+    if (challenge.status !== OtpStatus.PENDING) {
+      throw await fail(`challenge_${challenge.status}`)
+    }
     const hmac = await this.redis.get(otpKeys.challenge(challengeId))
-    if (!hmac) throw await fail('expired_or_unknown')
+    if (!hmac || challenge.expires_at <= new Date()) {
+      await this.challengeModel.updateOne(
+        { _id: challengeId, status: OtpStatus.PENDING },
+        { status: OtpStatus.EXPIRED },
+      )
+      await audit(AuditEventType.OTP_EXPIRED)
+      throw new UnauthorizedException(INVALID_CODE)
+    }
 
     // Count the attempt before comparing, so parallel guesses cannot all slip
     // under the limit.
     const attempt = await this.redis.incr(otpKeys.attempts(challengeId))
     if (attempt > OTP_MAX_ATTEMPTS) {
       await this.lock(challengeId, attempt - 1)
-      throw await fail('locked', attempt)
+      throw await fail('challenge_locked', attempt)
     }
 
     if (!safeEqualHex(this.codeHmac(challengeId, code), hmac)) {
+      const error = await fail('wrong_code', attempt)
       if (attempt >= OTP_MAX_ATTEMPTS) {
         await this.lock(challengeId, attempt)
+        await audit(AuditEventType.OTP_LOCKED, { failed_attempts: attempt })
       } else {
         await this.challengeModel.updateOne(
           { _id: challengeId },
           { failed_attempts: attempt },
         )
       }
-      throw await fail('wrong_code', attempt)
+      throw error
     }
 
     // Single use: only the request that deletes the key wins.
@@ -214,14 +250,7 @@ export class OtpService {
         consumed_at: now,
       },
     )
-    await this.auditLogs.record({
-      event: AuditEventType.OTP_VERIFY,
-      result: AuditResult.SUCCESS,
-      userId,
-      challengeId,
-      client,
-      metadata: { purpose, ref: challenge.ref, attempt },
-    })
+    await audit(AuditEventType.OTP_VERIFICATION_SUCCESS, { attempt })
   }
 
   /** Sends a new code for a live challenge without extending it. */
@@ -257,15 +286,13 @@ export class OtpService {
     if (updated !== 'OK') throw invalid
 
     await this.challengeModel.updateOne({ _id: challengeId }, { ref })
-    await this.sender.send({ phoneNumber, code, ref, purpose })
-    await this.auditLogs.record({
-      event: AuditEventType.OTP_RESEND,
-      result: AuditResult.SUCCESS,
-      userId,
-      challengeId,
-      client,
-      metadata: { purpose, ref },
-    })
+    // On failure the previous code is already replaced; the user can resend
+    // again once the cooldown is released.
+    await this.deliver(
+      { phoneNumber, code, ref, purpose },
+      { userId, challengeId, client, event: AuditEventType.OTP_RESENT },
+      async () => {},
+    )
 
     return {
       issued: {
@@ -291,23 +318,22 @@ export class OtpService {
     const phoneKey = otpKeys.rateByPhone(phoneHash)
     const ipKey = otpKeys.rateByIp(this.hash(`ip:${audit.client.ip}`))
 
-    const reject = async (reason: string, message: string) => {
+    const reject = async (limit: string, message: string) => {
       await this.auditLogs.record({
-        event: AuditEventType.OTP_REQUEST,
-        result: AuditResult.FAILURE,
+        event: AuditEventType.RATE_LIMIT_EXCEEDED,
         userId: audit.userId,
         client: audit.client,
-        metadata: { purpose: audit.purpose, reason },
+        metadata: { limit, purpose: audit.purpose },
       })
       return new HttpException(message, HttpStatus.TOO_MANY_REQUESTS)
     }
 
     const [byPhone, byIp] = await this.redis.mget(phoneKey, ipKey)
-    if (
-      Number(byPhone) >= OTP_MAX_SENDS_PER_PHONE ||
-      Number(byIp) >= OTP_MAX_SENDS_PER_IP
-    ) {
-      throw await reject('rate_limited', TOO_MANY_OTP_REQUESTS)
+    if (Number(byPhone) >= OTP_MAX_SENDS_PER_PHONE) {
+      throw await reject('otp_per_phone', TOO_MANY_OTP_REQUESTS)
+    }
+    if (Number(byIp) >= OTP_MAX_SENDS_PER_IP) {
+      throw await reject('otp_per_ip', TOO_MANY_OTP_REQUESTS)
     }
 
     const started = await this.redis.set(
@@ -317,7 +343,7 @@ export class OtpService {
       OTP_RESEND_COOLDOWN_SECONDS,
       'NX',
     )
-    if (started !== 'OK') throw await reject('cooldown', RESEND_TOO_SOON)
+    if (started !== 'OK') throw await reject('otp_cooldown', RESEND_TOO_SOON)
 
     await this.redis
       .multi()
@@ -326,6 +352,54 @@ export class OtpService {
       .incr(ipKey)
       .expire(ipKey, OTP_RATE_WINDOW_SECONDS, 'NX')
       .exec()
+  }
+
+  /**
+   * Sends the SMS and records `event` (OTP_SENT or OTP_RESENT). If the provider
+   * fails, records OTP_SEND_FAILED, runs `rollback`, releases the cooldown and
+   * answers 503.
+   */
+  private async deliver(
+    message: OtpMessage,
+    audit: {
+      userId: string
+      challengeId: string
+      client: ClientInfo
+      event: AuditEventType
+    },
+    rollback: () => Promise<void>,
+  ) {
+    const { userId, challengeId, client, event } = audit
+    const metadata = { purpose: message.purpose, ref: message.ref }
+    try {
+      await this.sender.send(message)
+    } catch (err) {
+      this.logger.error('OTP delivery failed', err)
+      await rollback()
+      await this.redis.del(
+        otpKeys.cooldown(this.hash(`phone:${message.phoneNumber}`)),
+      )
+      await this.auditLogs.record({
+        event: AuditEventType.OTP_SEND_FAILED,
+        userId,
+        challengeId,
+        client,
+        metadata: {
+          ...metadata,
+          error: err instanceof Error ? err.name : 'unknown',
+        },
+      })
+      throw new ServiceUnavailableException(
+        'Unable to send OTP. Try again later.',
+      )
+    }
+    await this.auditLogs.record({
+      event,
+      userId,
+      challengeId,
+      client,
+      metadata,
+    })
   }
 
   /** A pending, unexpired challenge, or null. */
