@@ -8,8 +8,11 @@ import { PHONE_NUMBER_PATTERN, UserEntity } from '../users/user.schema.js'
 export const OTP_CHALLENGE_RETENTION_SECONDS = 24 * 60 * 60
 
 export enum OtpPurpose {
+  /** Second factor of login. */
   SIGN_IN = 'sign_in',
   SIGN_UP = 'sign_up',
+  /** Confirms that a signed-in user owns their phone number. */
+  VERIFY_PHONE = 'verify_phone',
 }
 
 /**

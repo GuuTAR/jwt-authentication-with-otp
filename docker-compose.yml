@@ -16,20 +16,34 @@ services:
       retries: 5
       start_period: 10s
 
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     restart: unless-stopped
     env_file:
       - path: ./backend/.env
         required: true
-    # Overrides backend/.env so the API reaches Mongo over the compose network.
+    # Overrides backend/.env so the API reaches Mongo and Redis over the compose network.
     environment:
       PORT: 8000
       MONGODB_URI: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       mongo:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/"]
