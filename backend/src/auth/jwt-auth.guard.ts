@@ -10,6 +10,11 @@ import { InjectModel } from '@nestjs/mongoose'
 import type { Request } from 'express'
 import { isValidObjectId, Model } from 'mongoose'
 
+import { clientInfoOf } from '../common/client-info.decorator.js'
+
+import { AuditEventType } from '../audit-logs/audit-log.schema.js'
+import { AuditLogsService } from '../audit-logs/audit-logs.service.js'
+
 import { AuthSessionEntity } from './auth-session.schema.js'
 
 /** Claims in an access token. */
@@ -38,22 +43,49 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     @InjectModel(AuthSessionEntity.name)
     private readonly sessionModel: Model<AuthSessionEntity>,
+    private readonly auditLogs: AuditLogsService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<AuthenticatedRequest>()
+    const audit = (
+      event: AuditEventType,
+      metadata: Record<string, unknown>,
+      userId?: string,
+    ) =>
+      this.auditLogs.record({
+        event,
+        userId,
+        client: clientInfoOf(req),
+        metadata: { method: req.method, path: req.originalUrl, ...metadata },
+      })
+
     const [scheme, token] = req.headers.authorization?.split(' ') ?? []
     if (scheme !== 'Bearer' || !token) {
+      await audit(AuditEventType.UNAUTHORIZED_ACCESS, {
+        reason: 'missing_bearer_token',
+      })
       throw new UnauthorizedException('Missing bearer token')
     }
 
     let payload: AccessTokenPayload
     try {
       payload = await this.jwtService.verifyAsync<AccessTokenPayload>(token)
-    } catch {
+    } catch (err) {
+      await audit(AuditEventType.INVALID_TOKEN, {
+        token: 'access',
+        reason:
+          err instanceof Error && err.name === 'TokenExpiredError'
+            ? 'expired'
+            : 'invalid_signature_or_format',
+      })
       throw new UnauthorizedException('Invalid or expired token')
     }
     if (!isValidObjectId(payload.sid) || !isValidObjectId(payload.sub)) {
+      await audit(AuditEventType.INVALID_TOKEN, {
+        token: 'access',
+        reason: 'invalid_claims',
+      })
       throw new UnauthorizedException('Invalid or expired token')
     }
 
@@ -63,7 +95,14 @@ export class JwtAuthGuard implements CanActivate {
       revoked_at: { $exists: false },
       expires_at: { $gt: new Date() },
     })
-    if (!active) throw new UnauthorizedException('Session has ended')
+    if (!active) {
+      await audit(
+        AuditEventType.INVALID_TOKEN,
+        { token: 'access', reason: 'session_ended', session_id: payload.sid },
+        payload.sub,
+      )
+      throw new UnauthorizedException('Session has ended')
+    }
 
     req.user = { userId: payload.sub, sessionId: payload.sid }
     return true

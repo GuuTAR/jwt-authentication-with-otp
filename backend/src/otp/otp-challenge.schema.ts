@@ -18,7 +18,7 @@ export enum OtpPurpose {
 
 /**
  * pending -> verified -> consumed
- * pending -> expired | locked (too many failed attempts)
+ * pending -> expired | locked (too many failed attempts) | failed (not delivered)
  */
 export enum OtpStatus {
   PENDING = 'pending',
@@ -26,6 +26,8 @@ export enum OtpStatus {
   CONSUMED = 'consumed',
   EXPIRED = 'expired',
   LOCKED = 'locked',
+  /** The SMS provider failed, so no code was delivered. */
+  FAILED = 'failed',
 }
 
 @Schema({

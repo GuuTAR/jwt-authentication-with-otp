@@ -7,6 +7,8 @@ import {
   type SecurityConfig,
 } from '../config/security.config.js'
 
+import { AuditLogsModule } from '../audit-logs/audit-logs.module.js'
+
 import { AuthSessionEntity, AuthSessionSchema } from './auth-session.schema.js'
 import { JwtAuthGuard } from './jwt-auth.guard.js'
 
@@ -20,6 +22,7 @@ const sessionModels = MongooseModule.forFeature([
  */
 @Module({
   imports: [
+    AuditLogsModule,
     sessionModels,
     JwtModule.registerAsync({
       inject: [SECURITY_CONFIG],
@@ -32,6 +35,6 @@ const sessionModels = MongooseModule.forFeature([
   ],
   providers: [JwtAuthGuard],
   // Modules using `@UseGuards(JwtAuthGuard)` resolve its dependencies themselves.
-  exports: [JwtAuthGuard, JwtModule, sessionModels],
+  exports: [JwtAuthGuard, JwtModule, sessionModels, AuditLogsModule],
 })
 export class JwtAuthModule {}

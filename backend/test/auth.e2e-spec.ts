@@ -191,7 +191,7 @@ describe('Auth 2FA flow (e2e)', () => {
 
       expect(ctx.otp.sent).toEqual([])
       expect(
-        (await auditEvents({ event_type: 'login_password' })).map((e) => [
+        (await auditEvents({ event_type: 'LOGIN_FAILED' })).map((e) => [
           e.result,
           e.metadata.reason,
         ]),
@@ -311,11 +311,16 @@ describe('Auth 2FA flow (e2e)', () => {
 
       const challenge = await ctx.conn.collection('otp_challenges').findOne({})
       expect(challenge).toMatchObject({ status: 'locked', failed_attempts: 5 })
-      const failures = await auditEvents({
-        event_type: 'otp_verify',
-        result: 'failure',
-      })
-      expect(failures).toHaveLength(6)
+      const failures = await auditEvents({ result: 'failure' })
+      expect(failures.map((e) => [e.event_type, e.metadata.reason])).toEqual([
+        ...Array.from({ length: 4 }, () => [
+          'OTP_VERIFICATION_FAILED',
+          'wrong_code',
+        ]),
+        ['OTP_VERIFICATION_FAILED', 'wrong_code'],
+        ['OTP_LOCKED', undefined],
+        ['OTP_VERIFICATION_FAILED', 'challenge_locked'],
+      ])
       expect(failures.every((e) => !JSON.stringify(e).includes(code))).toBe(
         true,
       )
@@ -431,7 +436,7 @@ describe('Auth 2FA flow (e2e)', () => {
         (await ctx.conn.collection('otp_challenges').findOne({}))?.ref,
       ).toBe(ref)
       expect(
-        (await auditEvents({ event_type: 'otp_resend' }))[0].metadata,
+        (await auditEvents({ event_type: 'OTP_RESENT' }))[0].metadata,
       ).toMatchObject({ ref })
 
       const second = ctx.otp.last.code

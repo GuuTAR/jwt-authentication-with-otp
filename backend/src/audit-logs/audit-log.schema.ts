@@ -6,20 +6,68 @@ import { OtpChallengeEntity } from '../otp/otp-challenge.schema.js'
 
 import { UserEntity } from '../users/user.schema.js'
 
+/**
+ * Security events, grouped as in the audit log design. Values are stored in
+ * `audit_logs.event_type`.
+ */
 export enum AuditEventType {
-  /** Username/password check, the first factor of login. */
-  LOGIN_PASSWORD = 'login_password',
-  OTP_REQUEST = 'otp_request',
-  OTP_RESEND = 'otp_resend',
-  OTP_VERIFY = 'otp_verify',
-  SESSION_CREATE = 'session_create',
-  SESSION_REFRESH = 'session_refresh',
-  SESSION_REVOKE = 'session_revoke',
+  // Authentication
+  USER_REGISTERED = 'USER_REGISTERED',
+  /** Both factors passed and tokens were issued. */
+  LOGIN_SUCCESS = 'LOGIN_SUCCESS',
+  /** Password step failed: unknown user, wrong password, suspended, etc. */
+  LOGIN_FAILED = 'LOGIN_FAILED',
+  LOGOUT_SUCCESS = 'LOGOUT_SUCCESS',
+  TOKEN_REFRESHED = 'TOKEN_REFRESHED',
+  /** Reserved: a session revoked other than by logout (no feature yet). */
+  TOKEN_REVOKED = 'TOKEN_REVOKED',
+
+  // OTP
+  OTP_REQUESTED = 'OTP_REQUESTED',
+  OTP_SENT = 'OTP_SENT',
+  OTP_SEND_FAILED = 'OTP_SEND_FAILED',
+  OTP_VERIFICATION_SUCCESS = 'OTP_VERIFICATION_SUCCESS',
+  OTP_VERIFICATION_FAILED = 'OTP_VERIFICATION_FAILED',
+  OTP_EXPIRED = 'OTP_EXPIRED',
+  OTP_RESENT = 'OTP_RESENT',
+  OTP_LOCKED = 'OTP_LOCKED',
+
+  // Security
+  RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
+  /** Reserved: no account lockout feature yet. */
+  ACCOUNT_LOCKED = 'ACCOUNT_LOCKED',
+  /** A bearer token was malformed, forged, expired or its session ended. */
+  INVALID_TOKEN = 'INVALID_TOKEN',
+  /** A protected API was called without a bearer token. */
+  UNAUTHORIZED_ACCESS = 'UNAUTHORIZED_ACCESS',
+
+  // User security (reserved: these features do not exist yet)
+  PASSWORD_CHANGED = 'PASSWORD_CHANGED',
+  PASSWORD_RESET = 'PASSWORD_RESET',
+  TWO_FACTOR_ENABLED = 'TWO_FACTOR_ENABLED',
+  TWO_FACTOR_DISABLED = 'TWO_FACTOR_DISABLED',
 }
 
 export enum AuditResult {
   SUCCESS = 'success',
   FAILURE = 'failure',
+}
+
+const FAILURE_EVENTS = new Set<AuditEventType>([
+  AuditEventType.LOGIN_FAILED,
+  AuditEventType.OTP_SEND_FAILED,
+  AuditEventType.OTP_VERIFICATION_FAILED,
+  AuditEventType.OTP_EXPIRED,
+  AuditEventType.OTP_LOCKED,
+  AuditEventType.RATE_LIMIT_EXCEEDED,
+  AuditEventType.ACCOUNT_LOCKED,
+  AuditEventType.INVALID_TOKEN,
+  AuditEventType.UNAUTHORIZED_ACCESS,
+])
+
+/** Every event has one outcome, so `result` is derived rather than passed. */
+export function resultOf(event: AuditEventType): AuditResult {
+  return FAILURE_EVENTS.has(event) ? AuditResult.FAILURE : AuditResult.SUCCESS
 }
 
 @Schema({

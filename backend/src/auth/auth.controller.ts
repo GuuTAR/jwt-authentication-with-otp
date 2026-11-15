@@ -61,8 +61,11 @@ export class AuthController {
   @ResponseMessage('User registered successfully')
   @ApiCreatedResponseOf(AuthUser)
   @ApiErrorResponses(BAD_REQUEST, CONFLICT, SERVER_ERROR)
-  register(@Body() body: AuthRegisterRequest): Promise<AuthUser> {
-    return this.authService.register(body)
+  register(
+    @Body() body: AuthRegisterRequest,
+    @Client() client: ClientInfo,
+  ): Promise<AuthUser> {
+    return this.authService.register(body, client)
   }
 
   @Post('login')
