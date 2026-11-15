@@ -7,7 +7,7 @@ on:
       - dev
     paths:
       - "web/**"
-      - ".github/workflows/pr-build-check.yml"
+      - ".github/workflows/web-pr-validation.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
