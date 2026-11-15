@@ -28,7 +28,7 @@ Copy `.env.template` to `.env` and fill in the values. Real environment variable
 Login is two-factor: **Password → OTP → JWT**. No token is issued until both factors pass.
 
 ```text
-POST /auth/login       { username, password }   → { auth_id, challenge_id, phone_hint, ... }  (OTP sent)
+POST /auth/login       { username, password }   → { auth_id, challenge_id, ref, phone_hint, ... }  (OTP sent)
 POST /auth/verify-2fa  { auth_id, code }        → { access_token, refresh_token, user, ... }
 ```
 
@@ -52,6 +52,7 @@ Send the access token as `Authorization: Bearer <access_token>`. Swagger UI is a
 - The OTP is bound to the user, the purpose and the pending login. It expires after 5 minutes and works once.
 - 5 wrong codes lock the challenge. Resending sends a new code but keeps the expiry and the attempt count.
 - Codes can be sent to a phone number at most once every 60 seconds.
+- Each code comes with a 4-character reference (`ref`, e.g. `K7QP`) that appears in the SMS and in the API response, so the user can match them. A resend gets a new ref. The ref is not a secret and is not checked on verify.
 - 10 failed passwords from one IP block login from it for 15 minutes.
 - The pending login expires after 5 minutes and works once.
 - Codes are stored only as HMACs, refresh tokens only as SHA-256 hashes, and IPs and phone numbers in Redis keys only as HMACs.
@@ -62,7 +63,7 @@ Send the access token as `Authorization: Bearer <access_token>`. Swagger UI is a
 | Key | Purpose | TTL |
 | --- | --- | --- |
 | `auth:pending:{authId}` | Pending login between password and OTP | 300s |
-| `otp:{challengeId}` | OTP HMAC, user and purpose | 300s |
+| `otp:{challengeId}` | OTP HMAC, ref, user and purpose | 300s |
 | `otp:attempt:{challengeId}` | Failed OTP attempts | 300s |
 | `otp:cooldown:{phoneHash}` | Resend cooldown | 60s |
 | `rate:login:ip:{ipHash}` | Failed password attempts per IP | 900s |
@@ -72,7 +73,7 @@ Send the access token as `Authorization: Bearer <access_token>`. Swagger UI is a
 There is no SMS provider yet. `LogOtpSender` writes each code to the server log:
 
 ```text
-[OtpSender] [sign_in] OTP for +66*****5678: 123456
+[OtpSender] [sign_in] OTP for +66*****5678: 123456 (Ref: K7QP)
 ```
 
 To send real SMS, implement `OtpSender` (`src/otp/otp-sender.ts`) and bind it to `OTP_SENDER` in `OtpModule`.

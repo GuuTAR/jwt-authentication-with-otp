@@ -1,4 +1,10 @@
 export const OTP_LENGTH = 6
+/**
+ * Reference shown next to the code in the SMS and in the app, so the user can
+ * match them. Not a secret. Ambiguous characters (0/O, 1/I/L) are left out.
+ */
+export const OTP_REF_LENGTH = 4
+export const OTP_REF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 /** Lifetime of a challenge. Resending a code does not extend it. */
 export const OTP_TTL_SECONDS = 5 * 60
 /** Wrong codes allowed per challenge before it is locked. */

@@ -1,12 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common'
 
-import { OtpPurpose } from './otp-challenge.schema.js'
+import type { OtpPurpose } from './otp-challenge.schema.js'
 
 /** Injection token for the `OtpSender` that delivers codes. */
 export const OTP_SENDER = Symbol('OTP_SENDER')
 
+export interface OtpMessage {
+  phoneNumber: string
+  code: string
+  /** Shown with the code, e.g. "123456 (Ref: K7QP)". */
+  ref: string
+  purpose: OtpPurpose
+}
+
 export interface OtpSender {
-  send(phoneNumber: string, code: string, purpose: OtpPurpose): Promise<void>
+  send(message: OtpMessage): Promise<void>
 }
 
 /** +66812345678 -> +66*****5678 */
@@ -31,9 +39,9 @@ export class LogOtpSender implements OtpSender {
     )
   }
 
-  async send(phoneNumber: string, code: string, purpose: OtpPurpose) {
+  async send({ phoneNumber, code, ref, purpose }: OtpMessage) {
     this.logger.log(
-      `[${purpose}] OTP for ${maskPhoneNumber(phoneNumber)}: ${code}`,
+      `[${purpose}] OTP for ${maskPhoneNumber(phoneNumber)}: ${code} (Ref: ${ref})`,
     )
   }
 }

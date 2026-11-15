@@ -6,22 +6,21 @@ import type { Connection } from 'mongoose'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { AppModule } from '../src/app.module.js'
-import { OtpPurpose } from '../src/otp/otp-challenge.schema.js'
-import { OTP_SENDER, type OtpSender } from '../src/otp/otp-sender.js'
+import {
+  OTP_SENDER,
+  type OtpMessage,
+  type OtpSender,
+} from '../src/otp/otp-sender.js'
 import { REDIS } from '../src/redis/redis.module.js'
 
-export interface SentOtp {
-  phoneNumber: string
-  code: string
-  purpose: OtpPurpose
-}
+export type SentOtp = OtpMessage
 
 /** Records codes instead of sending SMS. */
 export class FakeOtpSender implements OtpSender {
   readonly sent: SentOtp[] = []
 
-  async send(phoneNumber: string, code: string, purpose: OtpPurpose) {
-    this.sent.push({ phoneNumber, code, purpose })
+  async send(message: OtpMessage) {
+    this.sent.push(message)
   }
 
   get last(): SentOtp {

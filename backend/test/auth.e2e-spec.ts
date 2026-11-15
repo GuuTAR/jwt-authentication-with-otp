@@ -9,6 +9,9 @@ import {
   type TestContext,
 } from './helpers.js'
 
+/** 4 characters, without the ambiguous 0, O, 1, I and L. */
+const REF_PATTERN = /^[A-HJKMNP-Z2-9]{4}$/
+
 describe('Auth 2FA flow (e2e)', () => {
   let ctx: TestContext
   let server: ReturnType<TestContext['app']['getHttpServer']>
@@ -107,6 +110,7 @@ describe('Auth 2FA flow (e2e)', () => {
         body: {
           auth_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
           challenge_id: expect.stringMatching(/^[0-9a-f]{24}$/),
+          ref: expect.stringMatching(REF_PATTERN),
           expires_in: 300,
           resend_after: 60,
           phone_hint: `${phoneNumber.slice(0, 3)}*****${phoneNumber.slice(-4)}`,
@@ -117,9 +121,12 @@ describe('Auth 2FA flow (e2e)', () => {
         {
           phoneNumber,
           code: expect.stringMatching(/^\d{6}$/),
+          ref: res.body.body.ref,
           purpose: 'sign_in',
         },
       ])
+      const challenge = await ctx.conn.collection('otp_challenges').findOne({})
+      expect(challenge?.ref).toBe(res.body.body.ref)
     })
 
     it('stores the pending auth and OTP in Redis with a 300s TTL and no plaintext code', async () => {
@@ -333,6 +340,17 @@ describe('Auth 2FA flow (e2e)', () => {
       })
       expect(res.body.body.expires_in).toBeLessThanOrEqual(120)
       expect(ctx.otp.sent).toHaveLength(2)
+
+      // The new SMS, the response, Mongo and the audit log share the new ref.
+      const { ref } = res.body.body
+      expect(ref).toMatch(REF_PATTERN)
+      expect(ctx.otp.last.ref).toBe(ref)
+      expect(
+        (await ctx.conn.collection('otp_challenges').findOne({}))?.ref,
+      ).toBe(ref)
+      expect(
+        (await auditEvents({ event_type: 'otp_resend' }))[0].metadata,
+      ).toMatchObject({ ref })
 
       const second = ctx.otp.last.code
       if (first !== second) await verify2fa(authId, first).expect(401)

@@ -129,6 +129,7 @@ describe('Auth schemas (e2e)', () => {
       const challenge = await OtpChallenge.create({
         phone_number: '+66822222222',
         purpose: OtpPurpose.SIGN_UP,
+        ref: 'K7QP',
         expires_at: new Date(Date.now() + 5 * 60_000),
       })
       expect(challenge.user_id).toBeUndefined()

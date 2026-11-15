@@ -38,6 +38,13 @@ export class OtpChallengeResponse {
   })
   resend_after: number
 
+  @ApiProperty({
+    description:
+      'Reference printed next to the code in the SMS. Show it to the user so they can match the message. Changes on resend.',
+    example: 'K7QP',
+  })
+  ref: string
+
   @ApiProperty({ example: '+66*****5678' })
   phone_hint: string
 }
@@ -48,6 +55,7 @@ export function toChallengeResponse(
 ): OtpChallengeResponse {
   return {
     challenge_id: issued.challengeId,
+    ref: issued.ref,
     expires_in: issued.expiresIn,
     resend_after: issued.resendAfter,
     phone_hint: maskPhoneNumber(phoneNumber),
