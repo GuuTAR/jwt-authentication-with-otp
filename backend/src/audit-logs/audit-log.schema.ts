@@ -7,7 +7,10 @@ import { OtpChallengeEntity } from '../otp/otp-challenge.schema.js'
 import { UserEntity } from '../users/user.schema.js'
 
 export enum AuditEventType {
+  /** Username/password check, the first factor of login. */
+  LOGIN_PASSWORD = 'login_password',
   OTP_REQUEST = 'otp_request',
+  OTP_RESEND = 'otp_resend',
   OTP_VERIFY = 'otp_verify',
   SESSION_CREATE = 'session_create',
   SESSION_REFRESH = 'session_refresh',

@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 
+import { OtpChallengeResponse } from '../otp/otp.dto.js'
+
 import { UserStatus } from '../users/user.schema.js'
 
 export class AuthUser {
@@ -12,7 +14,11 @@ export class AuthUser {
   @ApiPropertyOptional({ example: '+66812345678' })
   phone_number?: string
 
-  @ApiProperty({ enum: UserStatus, example: UserStatus.ACTIVE })
+  @ApiProperty({
+    enum: UserStatus,
+    example: UserStatus.ACTIVE,
+    description: '`pending` until the phone number is verified by an OTP',
+  })
   status: UserStatus
 
   @ApiProperty()
@@ -22,7 +28,16 @@ export class AuthUser {
   updated_at: Date
 }
 
-export class AuthLoginResponse {
+/** First factor passed: an OTP was sent, but no token is issued yet. */
+export class AuthLoginResponse extends OtpChallengeResponse {
+  @ApiProperty({
+    description: 'Pass to POST /api/v1/auth/verify-2fa with the code',
+    example: '3f2b8c1e-7d4a-4f6b-9a2e-1c5d8e9f0a1b',
+  })
+  auth_id: string
+}
+
+export class AuthTokensResponse {
   @ApiProperty({ description: 'JWT, use as: Authorization: Bearer <token>' })
   access_token: string
 
@@ -30,10 +45,22 @@ export class AuthLoginResponse {
   token_type: 'Bearer'
 
   @ApiProperty({
-    description: 'Seconds until the token expires',
-    example: 3600,
+    description: 'Seconds until the access token expires',
+    example: 900,
   })
   expires_in: number
+
+  @ApiProperty({
+    description:
+      'Opaque token for POST /api/v1/auth/refresh. Rotated on every refresh.',
+  })
+  refresh_token: string
+
+  @ApiProperty({
+    description: 'Seconds until the refresh token and session expire',
+    example: 604800,
+  })
+  refresh_expires_in: number
 
   @ApiProperty({ type: AuthUser })
   user: AuthUser
