@@ -1,13 +1,7 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
+import { ApiProperty } from '@nestjs/swagger'
 
 import { Transform } from 'class-transformer'
-import {
-  IsOptional,
-  IsString,
-  Matches,
-  MaxLength,
-  MinLength,
-} from 'class-validator'
+import { IsString, Matches, MaxLength, MinLength } from 'class-validator'
 
 import {
   PHONE_NUMBER_PATTERN,
@@ -35,11 +29,13 @@ export class AuthRegisterRequest {
   @MaxLength(128)
   password: string
 
-  @ApiPropertyOptional({ example: '+66812345678', description: 'E.164 format' })
-  @IsOptional()
+  @ApiProperty({
+    example: '+66812345678',
+    description: 'E.164 format. One-time codes for login are sent here.',
+  })
   @IsString()
   @Matches(PHONE_NUMBER_PATTERN, {
     message: 'phone_number must be in E.164 format, e.g. +66812345678',
   })
-  phone_number?: string
+  phone_number: string
 }

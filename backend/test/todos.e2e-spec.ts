@@ -1,29 +1,11 @@
-import { Test, TestingModule } from '@nestjs/testing'
-import { INestApplication } from '@nestjs/common'
-import { getConnectionToken } from '@nestjs/mongoose'
-import type { Connection } from 'mongoose'
 import request from 'supertest'
-import type { App } from 'supertest/types.js'
-import { AppModule } from '../src/app.module.js'
+import { bearer, createTestApp, signIn, type TestContext } from './helpers.js'
 
 describe('TodosController (e2e)', () => {
-  let app: INestApplication<App>
+  let ctx: TestContext
+  let app: TestContext['app']
   let tokens: Record<string, string>
-  const asUser = (name: string) => ({ Authorization: `Bearer ${tokens[name]}` })
-
-  /** Registers and logs in a user, returning its access token. */
-  const signUp = async (username: string) => {
-    const credentials = { username, password: 'correct-horse' }
-    await request(app.getHttpServer())
-      .post('/api/v1/auth/register')
-      .send(credentials)
-      .expect(201)
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send(credentials)
-      .expect(200)
-    return res.body.body.access_token as string
-  }
+  const asUser = (name: string) => bearer(tokens[name])
 
   const createTodo = async (title: string, user = 'user-1') => {
     const res = await request(app.getHttpServer())
@@ -35,21 +17,11 @@ describe('TodosController (e2e)', () => {
   }
 
   beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile()
-
-    app = moduleFixture.createNestApplication()
-    await app.init()
-    const conn = app.get<Connection>(getConnectionToken())
-    await Promise.all(
-      ['todos', 'users', 'auth_sessions'].map((name) =>
-        conn.collection(name).deleteMany({}),
-      ),
-    )
+    ctx = await createTestApp()
+    app = ctx.app
     tokens = {
-      'user-1': await signUp('user_1'),
-      'user-2': await signUp('user_2'),
+      'user-1': (await signIn(ctx, 'user_1')).access_token,
+      'user-2': (await signIn(ctx, 'user_2')).access_token,
     }
   })
 
