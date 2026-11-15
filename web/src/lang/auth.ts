@@ -39,3 +39,13 @@ export const LOGOUT_SUCCESS_MESSAGE: Record<LANGUAGE, string> = {
   [LANGUAGE.ENGLISH]: 'Logout successful!',
   [LANGUAGE.THAI]: 'ออกจากระบบสำเร็จ!',
 }
+
+export const INVALID_CODE_MESSAGE: Record<LANGUAGE, string> = {
+  [LANGUAGE.ENGLISH]: 'Invalid or expired code',
+  [LANGUAGE.THAI]: 'รหัสไม่ถูกต้องหรือหมดอายุแล้ว',
+}
+
+export const SIGN_IN_AGAIN_MESSAGE: Record<LANGUAGE, string> = {
+  [LANGUAGE.ENGLISH]: 'Your sign-in has expired. Please sign in again.',
+  [LANGUAGE.THAI]: 'การเข้าสู่ระบบหมดอายุแล้ว กรุณาเข้าสู่ระบบอีกครั้ง',
+}

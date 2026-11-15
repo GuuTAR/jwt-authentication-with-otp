@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 import LoginView from '@/views/Login/LoginPage.vue'
+import OtpVerificationView from '@/views/OtpVerification/OtpVerificationPage.vue'
 import TodoView from '@/views/Todo/TodoPage.vue'
 
 const router = createRouter({
@@ -20,6 +21,12 @@ const router = createRouter({
       component: LoginView,
       meta: { showMenu: false },
     },
+    {
+      path: '/verify-otp',
+      name: 'verify-otp',
+      component: OtpVerificationView,
+      meta: { showMenu: false },
+    },
   ],
 })
 
@@ -28,7 +35,10 @@ router.beforeEach(async (to) => {
   await authStore.waitForAuthReady()
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) return { name: 'login' }
-  if (to.name === 'login' && authStore.isAuthenticated) return { name: 'home' }
+  const isAuthPage = to.name === 'login' || to.name === 'verify-otp'
+  if (isAuthPage && authStore.isAuthenticated) return { name: 'home' }
+  // The OTP step only exists after a correct password (kept in memory).
+  if (to.name === 'verify-otp' && !authStore.pendingLogin) return { name: 'login' }
 })
 
 export default router
