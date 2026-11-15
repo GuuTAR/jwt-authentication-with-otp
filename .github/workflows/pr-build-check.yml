@@ -1,0 +1,47 @@
+name: Web PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "web/**"
+      - ".github/workflows/pr-build-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: yarn
+          cache-dependency-path: web/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint
+        run: |
+          yarn oxlint .
+          yarn eslint .
+
+      - name: Type Check
+        run: yarn type-check
+
+      - name: Build
+        run: yarn build-only
